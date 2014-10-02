@@ -3,8 +3,9 @@ all:	3600fs 3600mkfs
 3600fs: 3600fs.c
 	gcc $< disk.c -std=gnu99 -lfuse -O0 -g -lm -Wall -pedantic -Wextra -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=26 -o $@
 
+#Added -lrt flag for clock_gettime function; silence linker error
 3600mkfs: 3600mkfs.c
-	gcc $< disk.c -std=gnu99 -O0 -g -lm -Wall -pedantic -Wextra -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=26 -o $@
+	gcc $< disk.c -std=gnu99 -O0 -g -lm -Wall -pedantic -Wextra -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=26 -lrt -o $@
 
 test: 3600fs 3600mkfs
 	./test

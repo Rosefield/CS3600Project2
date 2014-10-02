@@ -15,9 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <sys/types.h>
 #include <sys/stat.h>
 
+#include "inode.h"
 #include "3600fs.h"
 #include "disk.h"
 
@@ -28,20 +28,71 @@ void myformat(int size) {
   /* 3600: FILL IN CODE HERE.  YOU SHOULD INITIALIZE ANY ON-DISK
            STRUCTURES TO THEIR INITIAL VALUE, AS YOU ARE FORMATTING
            A BLANK DISK.  YOUR DISK SHOULD BE size BLOCKS IN SIZE. */
+	
+	//Initialize and write VCB
+	vcb myvcb;
+	memset(&myvcb, 0, sizeof(vcb));
 
-  /* 3600: AN EXAMPLE OF READING/WRITING TO THE DISK IS BELOW - YOU'LL
-           WANT TO REPLACE THE CODE BELOW WITH SOMETHING MEANINGFUL. */
+	myvcb.magic = 0x00000077;
+	myvcb.blocksize = BLOCKSIZE;
+	myvcb.root = (blocknum){.block=1, .valid=1};
+	myvcb.free = (blocknum){.block=3, .valid=1};			
+	strcpy(myvcb.name, "Why am I here?");
+	
+	char tmp[BLOCKSIZE];
+	memcpy(tmp, &myvcb, sizeof(vcb));
+	dwrite(0, tmp);
 
-  // first, create a zero-ed out array of memory  
-  char *tmp = (char *) malloc(BLOCKSIZE);
-  memset(tmp, 0, BLOCKSIZE);
+	//Initialize and write root DNODE
+	dnode mydnode;
+	memset(&mydnode, 0, sizeof(dnode));
 
-  // now, write that to every block
-  for (int i=0; i<size; i++) 
-    if (dwrite(i, tmp) < 0) 
-      perror("Error while writing to disk");
+	mydnode.size = 2;
+	mydnode.user = getuid();
+	mydnode.group = getgid();
+	mydnode.mode = S_IRWXU | S_IRWXG | S_IRWXO;
 
-  // voila! we now have a disk containing all zeros
+	clock_gettime(CLOCK_REALTIME, &mydnode.access_time);
+	clock_gettime(CLOCK_REALTIME, &mydnode.modify_time);
+	clock_gettime(CLOCK_REALTIME, &mydnode.create_time);
+	
+	mydnode.direct[0] = (blocknum){2, 1};
+	//Technically memset to zero first, but do it again, for extra redundancy.
+	mydnode.direct[1].valid = 0;
+	mydnode.single_indirect.valid = 0;
+	mydnode.double_indirect.valid = 0;
+
+	memcpy(tmp, &mydnode, sizeof(vcb));
+	dwrite(1, tmp);
+
+	//Write DIRENT
+	dirent mydirent;
+	memset(&mydirent, 0, sizeof(dirent));
+	mydirent.entries[0] = (direntry){".", DIRENTRY_DIR, {1,1}};
+
+	//mydirent.entries[0]= (direntry){".", (char)2, {.block=1,.valid=1}};
+	mydirent.entries[1]= (direntry){"..", DIRENTRY_DIR, {1,1}};
+	
+	memcpy(tmp, &mydirent, sizeof(dirent));
+	dwrite(2, tmp);
+
+	//Initialize FREE blocks
+    free_block myfree;
+	memset(&myfree, 0, sizeof(free_block));
+	
+	for (int i=3; i<size -1; i++) {
+		//Extra verbose just in case sizeof(free) gives the size of the free() function
+		myfree.next = (blocknum){i+1, 1};
+	
+		memcpy(tmp, &myfree, sizeof(free_block));
+		if (dwrite(i, tmp) < 0) {
+    	  	perror("Error while writing to disk");
+		}
+	}
+	//Last block should have an invalid blocknum (lsb = 0) for next
+	myfree.next = (blocknum){0, 0};
+	memcpy(tmp, &myfree, sizeof(free_block));
+	dwrite(size - 1, tmp);
 
   // Do not touch or move this function
   dunconnect();
