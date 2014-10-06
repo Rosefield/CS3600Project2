@@ -1,3 +1,19 @@
+Project 2: Inode File System
+
+Schuyler Rosefield && Mark Mossberg, (team correcthorsebatterystaple)
+Northeastern University
+CS 3600: Systems and Networks
+Professor Alan Mislove
+
+We chose the Inodes format for the file system. We chose this partially because
+of the challenge and flexibility that it presented in comparison to the FAT
+file system, and the additional functionality it can provide with ease
+(multi-level directories) once the structures are set up. Lastly, we valued
+that it is the format used in Linux systems, and thought that implementing it
+would provide better understanding of how Linux works.
+
+---------- Original README Below ----------
+
 You should use the 'make' command to build your filesystem executable
 and the formatting program.  We have provided skeleton code in
 3600fs.c and 3600mkfs.c to get you started.  You will need to fill
