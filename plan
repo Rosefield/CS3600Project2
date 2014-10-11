@@ -1,0 +1,68 @@
+TODO:
+	Fix getattr so that LS works
+	Implement utimen for touch?
+	need to implement delete
+	need to implement readdir
+
+
+
+mount() {
+
+	connect to disk
+
+	read vcb
+		check vcb magic
+		check free block is invalid
+		get root DNODE
+
+	get root DNODE 
+		do nothing
+
+	get first DIRENT block (#2)
+		check that it has pointers to . and .., and that they point to blocknum 1
+	
+}
+
+unmount() {
+
+	feature add: metadata about write state
+
+	disconnect disk
+
+}
+
+getattr(pathname, stat *) {
+	feature add: multidirectories
+		require tokenization on pathname /, name, (text)+
+	read pathname
+		if pathname = "/"
+			root dir
+		if path is directory
+			direntry.type = DIRENTRY_DIR
+
+		if file
+			direntry.type = DIRENTRY_FILE
+
+	navigate to path
+		get root dnode, follow until path is found or not found
+
+}
+
+create(path, mode) {
+	for filename in path
+		if( find_file(filename) ) {
+			already exists
+			return -EEXISTS
+		}	
+
+	create inode for file
+	create direntry for inode
+	add direntry to parent dir's dirent
+		iterate through dirents, find direntry with block.valid == 0
+		increment dir's size
+
+}
+
+
+
+

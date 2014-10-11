@@ -43,6 +43,53 @@ vcb head;
 dnode root;
 dirent root_dirent;
 
+//Helper functions
+int file_exists(dnode * dir, char * name) {
+	if(dir->size == 0) {
+		return 0;
+	}
+
+	
+	if(dir->size < 110*16 +1) {
+		for(int i = 0; i < 110; ++i) {
+			dirent tmp;
+			dread(dir->direct[i].block, (char *)&tmp);
+			for(int x = 0; x < 16; ++x) {
+				if(strcmp(tmp.entries[x].name, name) == 0) {
+					return 1;
+				}
+			}
+		}	
+	}
+
+	return 0;
+}
+
+void add_direntry(dnode * dir, direntry our_direntry) {
+	
+	for(int i = 0; i < 110; ++i) {
+		dirent tmp;
+		dread(dir->direct[i].block, (char *)&tmp);
+		for(int x = 0; x < 16; ++x) {
+			if(!tmp.entries[x].block.valid) {
+				tmp.entries[x] = our_direntry;
+				dwrite(dir->direct[i].block, (char *)&tmp);
+				return;
+			}
+		}
+	}	
+}
+
+//Makes the 
+void vcb_update_free() {
+	free_block tmp;
+
+	dread(head.free.block, (char *)&tmp);
+
+	head.free = tmp.next;
+}
+
+
 
 /*
  * Initialize filesystem. Read in file system metadata and initialize
@@ -258,7 +305,59 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  *
  */
 static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
-    return 0;
+	//No space left in the filesystem, cannot create a new file
+	if(!head.free.valid) {
+		return -1;
+	}  
+
+
+	dnode dir = root;
+	char * name = path + 1;
+
+	//Feature add: for multidirectory, create directories as needed so that path can be made	
+
+	if(file_exists(&dir, name)) {
+		return -EEXIST;
+	}
+
+	//create inode for file
+	inode our_inode;
+
+	memset(&our_inode, 0, BLOCKSIZE);
+
+	our_inode.size = 0;
+	our_inode.user = geteuid();
+	our_inode.group = getegid();
+	our_inode.mode = mode;
+	
+	struct timespec time;
+	clock_gettime(CLOCK_REALTIME, &time);
+
+	our_inode.access_time = time;
+	our_inode.create_time = time;
+	our_inode.modify_time = time;
+
+	//direct, indirect, double indirect have no data at the start
+
+	//get a block for the inode from the vcb free list
+	blocknum block_inode = head.free;
+
+	dwrite(block_inode.block, (char *)&our_inode);
+
+	vcb_update_free();
+
+	//create direntry for inode
+	direntry our_direntry;
+	//direntry has field char * name[27], therefore cannot have a name of longer
+	//than 27 characters \0 included
+	strncpy(our_direntry.name, name, 27);
+	our_direntry.type = DIRENTRY_FILE;	
+	our_direntry.block = block_inode;	
+
+	//add direntry to dir's direct/indirect/double indirect blocks
+	add_direntry(&dir, our_direntry);
+
+	return 0;
 }
 
 /*
