@@ -37,6 +37,12 @@
 
 #include "3600fs.h"
 #include "disk.h"
+#include "inode.h"
+
+vcb head;
+dnode root;
+dirent root_dirent;
+
 
 /*
  * Initialize filesystem. Read in file system metadata and initialize
@@ -56,6 +62,38 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
   /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
            AND LOAD ANY DATA STRUCTURES INTO MEMORY */
 
+	//read vcb
+
+	dread(0, (char *)&head);
+
+	if(head.magic != 0x77) {
+		//throw an error
+		printf("Magic is incorrect.\n");
+		return NULL;
+	}
+
+	if(!head.free.valid) {
+		printf("free block is wrong.\n");
+		return NULL;
+	}
+
+	dread(head.root.block, (char *)&root);
+
+	//Do something with root?
+
+	dread(2, (char *)&root_dirent);
+
+	//root dirent should have entries for "." and ".." pointing to the root dnode
+	if(strcmp(root_dirent.entries[0].name,".") != 0 || root_dirent.entries[0].block.block != head.root.block) {
+		printf("first entry should have \".\" and point to root dnode.\n");
+		return NULL;
+	}
+	if(strcmp(root_dirent.entries[1].name,"..") != 0 || root_dirent.entries[1].block.block != head.root.block) {
+		printf("first entry should have \"..\" and point to root dnode.\n");
+		return NULL;
+	}
+
+
   return NULL;
 }
 
@@ -69,6 +107,9 @@ static void vfs_unmount (void *private_data) {
   /* 3600: YOU SHOULD ADD CODE HERE TO MAKE SURE YOUR ON-DISK STRUCTURES
            ARE IN-SYNC BEFORE THE DISK IS UNMOUNTED (ONLY NECESSARY IF YOU
            KEEP DATA CACHED THAT'S NOT ON DISK */
+
+	//Add metadata about write state, a "clean" tag
+
 
   // Do not touch or move this code; unconnects the disk
   dunconnect();
@@ -88,6 +129,50 @@ static void vfs_unmount (void *private_data) {
 static int vfs_getattr(const char *path, struct stat *stbuf) {
   fprintf(stderr, "vfs_getattr called\n");
 
+	//until multidirectory is implemented, our_node is always the root dnode
+	dnode our_node = root;
+	//direntry our_direntry;
+	const char * name;
+
+	if(strcmp(path, "/") == 0) {
+		our_node = root;
+		name = "";
+	} else {
+		our_node = root;
+		name = path + 1;
+		
+		//iterate through name to find nested directories
+
+		//our_node.size is the number of direntries contained in direct, indirect, double indirect
+		//The number of direntries that can be contained in just direct is 110 * 16
+		if(our_node.size < 110*16 +1) {
+			for(int i = 0; i < 110; ++i) {
+				for(int x = 0; x < 16; ++x) {
+					dirent tmp;
+					dread(our_node.direct[i].block, (char *)&tmp);
+					if(strcmp(tmp.entries[x].name, name) == 0) {
+						dread(tmp.entries[x].block.block, (char *)&our_node);
+						goto out;
+					}
+				}
+			}
+
+			return -ENOENT;
+		//Other cases that involve using indirect blocks
+		//go through direct[], indirect, double_indirect searching for name
+		} else if (0) {
+
+
+		}
+
+		//I can't believe I am using a goto in a serious application
+		//In case anything else needs to be done within the else block, leave the goto here
+		
+	}
+
+	out:
+
+
   // Do not mess with this code 
   stbuf->st_nlink = 1; // hard links
   stbuf->st_rdev  = 0;
@@ -95,20 +180,28 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 
   /* 3600: YOU MUST UNCOMMENT BELOW AND IMPLEMENT THIS CORRECTLY */
   
-  /*
-  if (The path represents the root directory)
+  
+  if(strcmp(path,"/") == 0)
     stbuf->st_mode  = 0777 | S_IFDIR;
   else 
-    stbuf->st_mode  = <<file mode>> | S_IFREG;
+	//what would the mode `be?
+    stbuf->st_mode  = our_node.mode | S_IFREG;
 
-  stbuf->st_uid     = // file uid
-  stbuf->st_gid     = // file gid
-  stbuf->st_atime   = // access time 
-  stbuf->st_mtime   = // modify time
-  stbuf->st_ctime   = // create time
-  stbuf->st_size    = // file size
-  stbuf->st_blocks  = // file size in blocks
-    */
+  stbuf->st_uid     = our_node.user; // file uid
+  stbuf->st_gid     = our_node.group; // file gid
+  stbuf->st_atime   = our_node.access_time.tv_sec; // access time 
+  stbuf->st_mtime   = our_node.modify_time.tv_sec; // modify time
+  stbuf->st_ctime   = our_node.create_time.tv_sec;// create time
+
+	//What is the proper handling for stat of a directory?
+	//Temporarily just check if the path is the root 
+	if(strcmp(path, "/") == 0) {
+		stbuf->st_size    = BLOCKSIZE; // file size
+		stbuf->st_blocks  = 1; // file size in blocks
+	} else {
+		stbuf->st_size    = our_node.size; // file size
+		stbuf->st_blocks  = our_node.size / BLOCKSIZE; // file size in blocks
+	}
 
   return 0;
 }
