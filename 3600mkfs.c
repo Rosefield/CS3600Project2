@@ -56,13 +56,13 @@ void myformat(int size) {
 	clock_gettime(CLOCK_REALTIME, &mydnode.modify_time);
 	clock_gettime(CLOCK_REALTIME, &mydnode.create_time);
 	
-	mydnode.direct[0] = (blocknum){2, 1};
+	mydnode.direct[0] = (blocknum){.block=2, .valid=1};
 	//Technically memset to zero first, but do it again, for extra redundancy.
 	mydnode.direct[1].valid = 0;
 	mydnode.single_indirect.valid = 0;
 	mydnode.double_indirect.valid = 0;
 
-	memcpy(tmp, &mydnode, sizeof(vcb));
+	memcpy(tmp, &mydnode, sizeof(mydnode));
 	dwrite(1, tmp);
 
 	//Write DIRENT
