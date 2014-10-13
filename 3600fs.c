@@ -298,6 +298,47 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info *fi)
 {
 
+    if (strcmp(path, "/") != 0) {
+        return -1;
+    }
+
+    int outer_start = offset / 16;
+    int inner_start, next;
+    int is_first = 1;
+    char *file;
+
+    // only supports direct blocks atm
+    // for each direct block starting from aaa
+    for (int i = outer_start; i < 110; i++) {
+
+        dirent tmp;
+        dread(root.direct[i].block, (char*) &tmp);
+
+        if (is_first) {
+            inner_start = offset % 16;
+            is_first = 0;
+        } else {
+            inner_start = 0;
+        }
+
+        // iterate through dirents
+        for (int j = inner_start; j < 16; j++) {
+            // check validity
+            if (!tmp.entries[j].block.valid) {
+                return 0;
+            }
+
+            file = tmp.entries[j].name;
+            next = i*16 + j + 1;
+            if (filler(buf, file, NULL, next)) {
+                return 0;
+            }
+
+
+        }
+    }
+
+    /* shouldn't get here */
     return 0;
 }
 

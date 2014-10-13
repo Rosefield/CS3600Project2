@@ -63,6 +63,63 @@ create(path, mode) {
 
 }
 
+return values:
+0: success
+-1: error (directory doesn't exist)
+
+readdir(path, buf, filler, offset) {
+
+make sure path is /
+find first dirent following given offset
+call filler(buf, filename, NULL, offset of next dirent)
+if that returns nonzero of if no more files, return 0
+otherwise find next file and go back to filler call
+
+if path != '/':
+    return -1
+
+//assuming offset is the number of the specific direntry to begin at (0 indexed)
+aaa = direct array element to start at = floor(offset/16)
+bbb = dirent element to start at = offset % 16
+int first_time_flag = 1
 
 
+
+
+// only supports direct blocks atm
+// for each direct block starting from aaa
+for (int i = aaa; i < 110; i++) {
+    the first time, the offset could matter.
+    other times, we'll want to go through the full 16 elements of dirent array
+
+    dirent tmp
+    dread(root.direct[i], tmp)
+
+    if first_time_flag:
+        bbb = offset % 16
+        first_time_flag = 0
+    else:
+        bbb = 0
+
+    // iterate through dirents
+    for (int j = bbb; j < 16; j++) {
+        // check validity
+        if (!tmp.entries[j].block.valid) {
+            goto
+        }
+        filename = tmp.entries[j].name
+        next direntry offset = i*16 + j + 1
+        if (filler(buf, filename, NULL, next)) {
+            return 0;
+        }
+
+
+
+    }
+}
+
+    
+
+
+}
 
