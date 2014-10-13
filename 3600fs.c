@@ -204,6 +204,8 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 				}
 			}
 
+            /* If we get here, we checked every direntry in every direct */
+            /* and found nothing that matched */
 			return -ENOENT;
 		//Other cases that involve using indirect blocks
 		//go through direct[], indirect, double_indirect searching for name
