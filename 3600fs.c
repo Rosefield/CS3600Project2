@@ -385,9 +385,9 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 	//get a block for the inode from the vcb free list
 	blocknum block_inode = head.free;
 
+	vcb_update_free();
 	dwrite(block_inode.block, (char *)&our_inode);
 
-	vcb_update_free();
 
 	//create direntry for inode
 	direntry our_direntry;
