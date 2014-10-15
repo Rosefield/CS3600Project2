@@ -100,7 +100,7 @@ void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
 				tmp.entries[x] = our_direntry;
 				dwrite(dir->direct[i].block, (char *)&tmp);
                 dir->size++;
-                dwrite(dir_block, (char*) &dir);
+                dwrite(dir_block, (char*) dir);
 				return;
 			}
 		}
@@ -345,7 +345,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     int outer_start = offset / 16;
     int inner_start, next;
-    int counter = 0; /* number of entries processed */
+    int counter = offset; /* number of entries processed */
     int is_first = 1;
     char *file;
 
@@ -368,7 +368,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
             /* stop when we've processed all entries */
             if (counter == root.size) {
-                break;
+                goto out;
             }
 
             /* check validity */
@@ -388,7 +388,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         }
     }
 
-    /* shouldn't get here */
+out:
     return 0;
 }
 
