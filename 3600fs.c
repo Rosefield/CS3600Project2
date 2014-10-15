@@ -90,9 +90,31 @@ int file_exists2(dnode * dir, char * name) {
 	return 0;
 }
 
+
+//Makes the 
+void vcb_update_free() {
+	free_block tmp;
+
+	dread(head.free.block, (char *)&tmp);
+
+    head.free = tmp.next;
+    dwrite(0, (char*) &head);
+}
+
 void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
 	
 	for(int i = 0; i < 110; ++i) {
+        /* we get the first root dirent for free (from 3600mkfs) but afterwards
+           we need to allocate dirents
+           
+           if we're starting a new dirent, its block will be 0 from the initial
+           format
+         */
+        if (dir->direct[i].block == 0) {
+            dir->direct[i] = head.free;
+            vcb_update_free();
+            dwrite(dir_block, (char *) dir);
+        }
 		dirent tmp;
 		dread(dir->direct[i].block, (char *)&tmp);
 		for(int x = 0; x < 16; ++x) {
@@ -104,17 +126,8 @@ void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
 				return;
 			}
 		}
+
 	}	
-}
-
-//Makes the 
-void vcb_update_free() {
-	free_block tmp;
-
-	dread(head.free.block, (char *)&tmp);
-
-    head.free = tmp.next;
-    dwrite(0, (char*) &head);
 }
 
 /*
