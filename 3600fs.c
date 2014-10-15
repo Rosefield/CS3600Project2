@@ -65,7 +65,32 @@ int file_exists(dnode * dir, char * name) {
 	return 0;
 }
 
-void add_direntry(dnode * dir, direntry our_direntry) {
+/*
+ * This is kind of dirty. Also makes sure name is a file (and not dir).
+ */
+int file_exists2(dnode * dir, char * name) {
+	if(dir->size == 0) {
+		return 0;
+	}
+
+	
+	if(dir->size < 110*16 +1) {
+		for(int i = 0; i < 110; ++i) {
+			dirent tmp;
+			dread(dir->direct[i].block, (char *)&tmp);
+			for(int x = 0; x < 16; ++x) {
+				if(strcmp(tmp.entries[x].name, name) == 0 &&
+                   tmp.entries[x].type == DIRENTRY_FILE) {
+					return 1;
+				}
+			}
+		}	
+	}
+
+	return 0;
+}
+
+void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
 	
 	for(int i = 0; i < 110; ++i) {
 		dirent tmp;
@@ -74,6 +99,8 @@ void add_direntry(dnode * dir, direntry our_direntry) {
 			if(!tmp.entries[x].block.valid) {
 				tmp.entries[x] = our_direntry;
 				dwrite(dir->direct[i].block, (char *)&tmp);
+                dir->size++;
+                dwrite(dir_block, (char*) &dir);
 				return;
 			}
 		}
@@ -86,10 +113,24 @@ void vcb_update_free() {
 
 	dread(head.free.block, (char *)&tmp);
 
-	head.free = tmp.next;
+    head.free = tmp.next;
+    dwrite(0, (char*) &head);
 }
 
-
+/*
+ * release_block -- free an arbitrary block, given number. create new free
+ * block pointing to current head.free and write it. then update head.free
+ * to point to newly replaced block
+ */
+void release_block (unsigned int block) {
+    /* new free block, pointing to current head.free */
+    free_block tmp;
+    tmp.next = head.free;
+    dwrite(block, (char*) &tmp);
+    /* set head.free to new */
+    head.free.block = block;
+    dwrite(0, (char*) &head);
+}
 
 /*
  * Initialize filesystem. Read in file system metadata and initialize
@@ -101,25 +142,25 @@ void vcb_update_free() {
  *
  */
 static void* vfs_mount(struct fuse_conn_info *conn) {
-  fprintf(stderr, "vfs_mount called\n");
+    fprintf(stderr, "vfs_mount called\n");
 
-  // Do not touch or move this code; connects the disk
-  dconnect();
+    // Do not touch or move this code; connects the disk
+    dconnect();
 
-  /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
-           AND LOAD ANY DATA STRUCTURES INTO MEMORY */
+    /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
+       AND LOAD ANY DATA STRUCTURES INTO MEMORY */
 
-	//read vcb
+    //read vcb
 
-	dread(0, (char *)&head);
+    dread(0, (char *)&head);
 
-	if(head.magic != 0x77) {
-		//throw an error
-		printf("Magic is incorrect.\n");
-		return NULL;
-	}
+    if(head.magic != 0x77) {
+        //throw an error
+        printf("Magic is incorrect.\n");
+        return NULL;
+    }
 
-	if(!head.free.valid) {
+    if(!head.free.valid) {
 		printf("free block is wrong.\n");
 		return NULL;
 	}
@@ -304,6 +345,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     int outer_start = offset / 16;
     int inner_start, next;
+    int counter = 0; /* number of entries processed */
     int is_first = 1;
     char *file;
 
@@ -323,9 +365,16 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
         // iterate through dirents
         for (int j = inner_start; j < 16; j++) {
-            // check validity
+
+            /* stop when we've processed all entries */
+            if (counter == root.size) {
+                break;
+            }
+
+            /* check validity */
             if (!tmp.entries[j].block.valid) {
-                return 0;
+                /* return 0; */
+                continue;
             }
 
             file = tmp.entries[j].name;
@@ -334,6 +383,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                 return 0;
             }
 
+            counter++;
 
         }
     }
@@ -353,13 +403,11 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 		return -1;
 	}  
 
-
-	dnode dir = root;
 	char * name = path + 1;
 
 	//Feature add: for multidirectory, create directories as needed so that path can be made	
 
-	if(file_exists(&dir, name)) {
+	if(file_exists(&root, name)) {
 		return -EEXIST;
 	}
 
@@ -398,7 +446,8 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 	our_direntry.block = block_inode;	
 
 	//add direntry to dir's direct/indirect/double indirect blocks
-	add_direntry(&dir, our_direntry);
+    // 1 is block of root dnode
+	add_direntry(&root, 1, our_direntry);
 
 	return 0;
 }
@@ -454,6 +503,72 @@ static int vfs_delete(const char *path)
   /* 3600: NOTE THAT THE BLOCKS CORRESPONDING TO THE FILE SHOULD BE MARKED
            AS FREE, AND YOU SHOULD MAKE THEM AVAILABLE TO BE USED WITH OTHER FILES */
 
+    //make sure file exists and is a file (not dir)
+
+    char *name = path + 1;
+    if (!file_exists2(&root, name)) {
+        return -1;
+    }
+
+    //remove file's entry from directory
+    /* TODO: this only works for directs, not indirects */
+    for (int i = 0; i < 110; i++) {
+    /* for each direct: */
+        dirent tmp;
+        dread(root.direct[i].block, (char*) &tmp);
+        for (int j = 0; j < 16; j++) {
+        /* for each direntry: */
+            if (strcmp(tmp.entries[j].name, name) == 0) {
+            /* if direntry.name == path: */
+                inode name_inode;
+                /* blk = direntry.block */
+                /* inode = dread(blk) */
+                dread(tmp.entries[j].block.block, (char*) &name_inode);
+                // free all of the file's data blocks
+                for(int x = 0; x < 110; x++) {
+                /* for each of inode's directs: */
+                    int done_flag = 0; // TODO this is really bad
+                    dirent name_dirent;
+                    dread(name_inode.direct[x].block, (char*) &name_dirent);
+                    for (int y = 0; y < 16; j++) {
+                    /* for each direntry: */
+                        /* check if valid */
+                        if (!name_dirent.entries[y].block.valid) {
+                            done_flag = 1; // break out of both loops
+                            break;
+                        }
+                        /* free the data block */
+                        release_block(name_dirent.entries[y].block.block);
+                    }
+                    if (done_flag) {
+                        /* we've reached the end of data blocks and don't */
+                        /* need to keep iterating through inode directs */
+                        break;
+                    }
+                }
+
+                /* free the inode itself */
+                release_block(tmp.entries[j].block.block);
+                
+                /* clear the direntry in the dirent */
+                direntry empty;
+                memset(&empty, 0, sizeof(empty));
+                tmp.entries[j] = empty;
+
+                /* write to disk */
+                dwrite(root.direct[i].block, (char*) &tmp);
+
+                /* decrement dnode size */
+                root.size--;
+                dwrite(1, (char*) &root);
+
+
+                return 0;
+            }
+        }
+    }
+
+    /* shouldn't get here */
     return 0;
 }
 

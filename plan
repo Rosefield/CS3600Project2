@@ -123,3 +123,40 @@ for (int i = aaa; i < 110; i++) {
 
 }
 
+
+
+
+returns:
+0: success
+-1: error
+delete(path)
+{
+    //make sure file exists and is a file (not dir)
+
+    if (file_exists(&dir, path))
+        return -1
+
+    //remove file's entry from directory
+    
+    for each direct:
+        for each direntry:
+            if direntry.name == path:
+                blk = direntry.block
+                inode = dread(blk)
+                // free all of the file's data blocks
+                for each of inode's directs:
+                    for each direntry:
+                        release_block(direntry.block.block)
+
+                // free the inode itself
+                release_block(direntry.block.block)
+                
+                // clear the direntry in the dirent
+                direntry blah
+                memset blah
+                entries[i] = blah
+
+    
+
+}
+
