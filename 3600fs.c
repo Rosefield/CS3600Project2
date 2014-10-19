@@ -44,54 +44,27 @@ dnode root;
 dirent root_dirent;
 
 //Helper functions
-int file_exists(dnode * dir, char * name) {
-	if(dir->size == 0) {
-		return 0;
-	}
-
-	
-	if(dir->size < 110*16 +1) {
-		for(int i = 0; i < 110; ++i) {
-			dirent tmp;
-			dread(dir->direct[i].block, (char *)&tmp);
-			for(int x = 0; x < 16; ++x) {
-				if(strcmp(tmp.entries[x].name, name) == 0) {
-					return 1;
-				}
-			}
-		}	
-	}
-
-	return 0;
-}
 
 /*
- * This is kind of dirty. Also makes sure name is a file (and not dir).
- */
-int file_exists2(dnode * dir, char * name) {
-	if(dir->size == 0) {
-		return 0;
-	}
+*d is the dirent to search in, 
+*name is the value to search for
+*de is a return value, if this is non-null it will copy the direntry for the found file
+*returns 1 if the file is found, 0 otherwise
+*/
 
-	
-	if(dir->size < 110*16 +1) {
-		for(int i = 0; i < 110; ++i) {
-			dirent tmp;
-			dread(dir->direct[i].block, (char *)&tmp);
-			for(int x = 0; x < 16; ++x) {
-				if(strcmp(tmp.entries[x].name, name) == 0 &&
-                   tmp.entries[x].type == DIRENTRY_FILE) {
-					return 1;
-				}
+int name_in_dirent(dirent d, char * name, direntry * de) {
+	for(int x = 0; x < 16; ++x) {
+		if(strcmp(d.entries[x].name, name) == 0) {
+			if(de) {
+				*de = d.entries[x];
 			}
-		}	
+			return 1;
+		}
 	}
-
 	return 0;
 }
 
-
-//Makes the 
+//Updates the VCB to be the next free block
 void vcb_update_free() {
 	free_block tmp;
 
@@ -99,6 +72,146 @@ void vcb_update_free() {
 
     head.free = tmp.next;
     dwrite(0, (char*) &head);
+}
+
+//de is an optional parameter, that when passed in, and is not null, will be set to the
+//direntry for the found file
+int file_exists(dnode * dir, char * name, direntry * de) {
+	if(dir->size == 0) {
+		return 0;
+	}
+	
+	//files in the double indirects
+	if(dir->size > 110 * 16 + 128*16) {
+		indirect double_indirect;
+		dread(dir->double_indirect.block, (char *)&double_indirect);
+
+		for(int i = 0; i < 128; ++i) {
+			indirect single;
+			dread(double_indirect.blocks[i].block, (char *) &single);
+			
+			for(int x = 0; x < 128; ++x) {
+				dirent tmp;
+				dread(single.blocks[x].block, (char *) &tmp);
+				if(name_in_dirent(tmp, name, de)) {
+					return 1;
+				}
+		
+			}
+		}
+	}	
+
+	//files in the single indirect
+	if(dir->size > 110*16) {
+		indirect single;
+		dread(dir->single_indirect.block, (char *) &single);
+
+		//Can have check to make sure we don't check above size
+		for(int i = 0; i < 128; ++i) {
+			dirent tmp;
+			dread(single.blocks[i].block, (char *) &tmp);
+			if(name_in_dirent(tmp, name, de)) {
+				return 1;
+			}
+		}
+	}
+
+	//Just the direct blocks
+	for(int i = 0; i < 110; ++i) {
+		dirent tmp;
+		dread(dir->direct[i].block, (char *)&tmp);
+		if(name_in_dirent(tmp, name, de)) {
+			return 1;
+		}
+	}	
+	
+	return 0;
+}
+
+blocknum get_inode_block(inode * node, int offset) {
+	if(offset > node->size) {
+		return (blocknum){0, 0};
+	}
+
+
+	//In double indirect
+	if(offset > 110 + 128) {
+		indirect double_indirect;
+		dread(node->double_indirect.block, (char *)&double_indirect);
+		
+		offset -= 110 + 128;
+		int double_offset = offset / 128 % 128;
+
+		indirect single_indirect;
+		dread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
+		
+		int single_offset = offset % 128;
+		return single_indirect.blocks[single_offset];	
+
+	}
+
+	//In single indirect
+	if(offset > 110) {
+		offset -= 110;
+		indirect single;
+		dread(node->single_indirect.block, (char *) &single);
+		return single.blocks[offset];
+
+	}
+	
+	return node->direct[offset];
+
+}
+
+void set_inode_block(inode * node, blocknum block, int offset) {
+	if(offset > node->size) {
+		node->size++;
+	}
+
+
+	//In double indirect
+	if(offset > 110 + 128) {
+		indirect double_indirect;
+		dread(node->double_indirect.block, (char *)&double_indirect);
+		
+		offset -= 110 + 128;
+		int double_offset = offset / 128 % 128;
+
+		indirect single_indirect;
+		dread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
+		
+		int single_offset = offset % 128;
+		single_indirect.blocks[single_offset] = block;
+		return;	
+	}
+
+	//In single indirect
+	if(offset > 110) {
+		offset -= 110;
+		indirect single;
+		dread(node->single_indirect.block, (char *) &single);
+		single.blocks[offset] = block;
+		return;
+	}
+	
+	node->direct[offset] = block;
+	return;
+}
+
+void write_inode_block(inode * node, char * data, int offset) {
+	blocknum block = get_inode_block(node, offset);
+	//Get a free block from the vcb
+	if(!block.valid) {
+		block = head.free;
+		if(!block.valid) {
+		//No more free blocks!
+			return;
+		}
+		vcb_update_free();
+	}
+
+	dwrite(block.block, data);
+	set_inode_block(node, block, offset);
 }
 
 void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
@@ -244,37 +357,15 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 		
 		//iterate through name to find nested directories
 
-		//our_node.size is the number of direntries contained in direct, indirect, double indirect
-		//The number of direntries that can be contained in just direct is 110 * 16
-		if(our_node.size < 110*16 +1) {
-			for(int i = 0; i < 110; ++i) {
-				for(int x = 0; x < 16; ++x) {
-					dirent tmp;
-					dread(our_node.direct[i].block, (char *)&tmp);
-					if(strcmp(tmp.entries[x].name, name) == 0) {
-						dread(tmp.entries[x].block.block, (char *)&our_node);
-						goto out;
-					}
-				}
-			}
+		direntry tmp;
 
-            /* If we get here, we checked every direntry in every direct */
-            /* and found nothing that matched */
+		//TODO: Recurse on "our_node" for  multi-level directories
+		if(file_exists(&our_node, name, &tmp)) {
+			dread(tmp.block.block, (char *) &our_node);
+		} else {
 			return -ENOENT;
-		//Other cases that involve using indirect blocks
-		//go through direct[], indirect, double_indirect searching for name
-		} else if (0) {
-
-
-		}
-
-		//I can't believe I am using a goto in a serious application
-		//In case anything else needs to be done within the else block, leave the goto here
-		
+		}	
 	}
-
-	out:
-
 
   // Do not mess with this code 
   stbuf->st_nlink = 1; // hard links
@@ -420,7 +511,7 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 
 	//Feature add: for multidirectory, create directories as needed so that path can be made	
 
-	if(file_exists(&root, name)) {
+	if(file_exists(&root, name, NULL)) {
 		return -EEXIST;
 	}
 
@@ -481,8 +572,46 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
                     struct fuse_file_info *fi)
 {
+	int bytes_read = 0;
 
-    return 0;
+	char * name = path + 1;
+
+	direntry tmp;
+	dnode our_node = root;
+	//TODO: work with multi-level directories
+	if(!file_exists(&our_node, name, &tmp)) {
+		return 0;
+	}
+	inode node;
+	dread(tmp.block.block, (char *)&node);
+
+	char data[BLOCKSIZE];
+	blocknum block;
+	int startblock = offset / BLOCKSIZE;
+
+	if(offset % BLOCKSIZE != 0) {
+		block = get_inode_block(&node, startblock);
+		dread(block.block, data);
+		memcpy(buf, data + BLOCKSIZE - (offset % BLOCKSIZE), offset % BLOCKSIZE);
+		bytes_read += offset % BLOCKSIZE; 
+		++startblock;
+	}	
+
+	while(bytes_read < size) {
+		block = get_inode_block(&node, startblock);
+		if(!block.valid) { break; }
+		dread(block.block, data);
+		if(size - bytes_read < BLOCKSIZE) {
+			memcpy(buf + bytes_read, data, size - bytes_read);
+			bytes_read = size;
+		} else {
+			memcpy(buf + bytes_read, data, BLOCKSIZE);
+			bytes_read += BLOCKSIZE;
+		} 
+		++startblock;
+	}
+
+    return bytes_read;
 }
 
 /*
@@ -502,8 +631,47 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 
   /* 3600: NOTE THAT IF THE OFFSET+SIZE GOES OFF THE END OF THE FILE, YOU
            MAY HAVE TO EXTEND THE FILE (ALLOCATE MORE BLOCKS TO IT). */
+	int bytes_written = 0;
 
-  return 0;
+	char * name = path + 1;
+	dnode our_node = root;
+	direntry tmp;
+	
+	//Can't find the file specified
+	if(!file_exists(&our_node, name, &tmp)) {
+		printf("File does not exist!");
+		return 0;
+	}
+
+	inode node;
+	dread(tmp.block.block, (char *)&node);
+
+	int writeblock = offset / BLOCKSIZE;
+	char data[BLOCKSIZE];
+
+	if(offset % BLOCKSIZE != 0) {
+		blocknum block = get_inode_block(&node, writeblock);		
+		dread(block.block, data);
+		memcpy(data + BLOCKSIZE - (offset % BLOCKSIZE), buf, offset % BLOCKSIZE); 
+		write_inode_block(&node, data, writeblock);
+		writeblock++;
+		bytes_written = offset % BLOCKSIZE;
+	}
+
+	while(bytes_written < size) {
+		if(size - bytes_written < BLOCKSIZE) {
+			memset(data, 0, BLOCKSIZE);
+			memcpy(data, buf + bytes_written, size - bytes_written);
+			write_inode_block(&node, data, writeblock);
+			bytes_written = size;	
+		} else {
+			write_inode_block(&node, buf + bytes_written, writeblock);
+			bytes_written += BLOCKSIZE;
+		}
+		writeblock++;
+	}
+
+  return bytes_written;
 }
 
 /**
@@ -519,8 +687,11 @@ static int vfs_delete(const char *path)
     //make sure file exists and is a file (not dir)
 
     char *name = path + 1;
-    if (!file_exists2(&root, name)) {
-        return -1;
+	direntry de;
+    if (file_exists(&root, name, &de)) {
+		if(de.type != DIRENTRY_FILE) {
+        	return -1;
+		}
     }
 
     //remove file's entry from directory
