@@ -53,7 +53,7 @@ dirent root_dirent;
 */
 
 int name_in_dirent(dirent d, char * name, direntry * de) {
-	for(int x = 0; x < 16; ++x) {
+	for(int x = 0; x < sizeof(d.entries) / sizeof(d.entries[0]); ++x) {
 		if(strcmp(d.entries[x].name, name) == 0) {
 			if(de) {
 				*de = d.entries[x];
@@ -82,7 +82,7 @@ int file_exists(dnode * dir, char * name, direntry * de) {
 	}
 	
 	//files in the double indirects
-	if(dir->size > 110 * 16 + 128*16) {
+	if(dir->size > 110 * ENTRIES_IN_DIR + 128*ENTRIES_IN_DIR) {
 		indirect double_indirect;
 		dread(dir->double_indirect.block, (char *)&double_indirect);
 
@@ -102,7 +102,7 @@ int file_exists(dnode * dir, char * name, direntry * de) {
 	}	
 
 	//files in the single indirect
-	if(dir->size > 110*16) {
+	if(dir->size > 110*ENTRIES_IN_DIR) {
 		indirect single;
 		dread(dir->single_indirect.block, (char *) &single);
 
@@ -228,7 +228,7 @@ void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
         }
 		dirent tmp;
 		dread(dir->direct[i].block, (char *)&tmp);
-		for(int x = 0; x < 16; ++x) {
+		for(int x = 0; x < ENTRIES_IN_DIR; ++x) {
 			if(!tmp.entries[x].block.valid) {
 				tmp.entries[x] = our_direntry;
 				dwrite(dir->direct[i].block, (char *)&tmp);
@@ -443,7 +443,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         return -1;
     }
 
-    int outer_start = offset / 16;
+    int outer_start = offset / ENTRIES_IN_DIR;
     int inner_start, next;
     int counter = offset; /* number of entries processed */
     int is_first = 1;
@@ -457,14 +457,14 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         dread(root.direct[i].block, (char*) &tmp);
 
         if (is_first) {
-            inner_start = offset % 16;
+            inner_start = offset % ENTRIES_IN_DIR;
             is_first = 0;
         } else {
             inner_start = 0;
         }
 
         // iterate through dirents
-        for (int j = inner_start; j < 16; j++) {
+        for (int j = inner_start; j < ENTRIES_IN_DIR; j++) {
 
             /* stop when we've processed all entries */
             if (counter == root.size) {
@@ -478,7 +478,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
             }
 
             file = tmp.entries[j].name;
-            next = i*16 + j + 1;
+            next = i*ENTRIES_IN_DIR + j + 1;
             if (filler(buf, file, NULL, next)) {
                 return 0;
             }
@@ -539,9 +539,9 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 
 	//create direntry for inode
 	direntry our_direntry;
-	//direntry has field char * name[27], therefore cannot have a name of longer
-	//than 27 characters \0 included
-	strncpy(our_direntry.name, name, 27);
+	//direntry has field char * name[59], therefore cannot have a name of longer
+	//than 59 characters \0 included
+	strncpy(our_direntry.name, name, 59);
 	our_direntry.type = DIRENTRY_FILE;	
 	our_direntry.block = block_inode;	
 
@@ -704,7 +704,7 @@ static int vfs_delete(const char *path)
     /* for each direct: */
         dirent tmp;
         dread(root.direct[i].block, (char*) &tmp);
-        for (int j = 0; j < 16; j++) {
+        for (int j = 0; j < ENTRIES_IN_DIR; j++) {
         /* for each direntry: */
             if (strcmp(tmp.entries[j].name, name) == 0) {
             /* if direntry.name == path: */
@@ -718,7 +718,7 @@ static int vfs_delete(const char *path)
                     int done_flag = 0; // TODO this is really bad
                     dirent name_dirent;
                     dread(name_inode.direct[x].block, (char*) &name_dirent);
-                    for (int y = 0; y < 16; j++) {
+                    for (int y = 0; y < ENTRIES_IN_DIR; j++) {
                     /* for each direntry: */
                         /* check if valid */
                         if (!name_dirent.entries[y].block.valid) {

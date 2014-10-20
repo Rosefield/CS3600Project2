@@ -44,13 +44,15 @@ typedef struct indirect_t {
 #define DIRENTRY_DIR  2
 
 typedef struct direntry_t {
-	char name[27]; //27 * 1
+	char name[59]; //27 * 1
 	char type; //1
 	blocknum block; //4
 } direntry; //32
 
+#define ENTRIES_IN_DIR 8
+
 typedef struct dirent_t {
-	direntry entries[16]; // 32 * 16 = 512
+	direntry entries[ENTRIES_IN_DIR]; // 32 * 16 = 512
 } dirent;
 
 //Dnode and Inode share the same structure
