@@ -69,9 +69,7 @@ void myformat(int size) {
 	dirent mydirent;
 	memset(&mydirent, 0, sizeof(dirent));
 	mydirent.entries[0] = (direntry){".", DIRENTRY_DIR, {1,1}};
-
-	//mydirent.entries[0]= (direntry){".", (char)2, {.block=1,.valid=1}};
-	mydirent.entries[1]= (direntry){"..", DIRENTRY_DIR, {1,1}};
+	mydirent.entries[1] = (direntry){"..", DIRENTRY_DIR, {1,1}};
 	
 	memcpy(tmp, &mydirent, sizeof(dirent));
 	dwrite(2, tmp);
