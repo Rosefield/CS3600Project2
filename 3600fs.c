@@ -163,12 +163,7 @@ blocknum get_inode_block(inode * node, int offset) {
 
 }
 
-void set_inode_block(inode * node, blocknum block, int offset) {
-	if(offset > node->size) {
-		node->size++;
-	}
-
-
+void set_inode_block(inode * node, blocknum inode_block, blocknum block, int offset) {
 	//In double indirect
 	if(offset > 110 + 128) {
 		indirect double_indirect;
@@ -182,6 +177,7 @@ void set_inode_block(inode * node, blocknum block, int offset) {
 		
 		int single_offset = offset % 128;
 		single_indirect.blocks[single_offset] = block;
+		dwrite(double_indirect.blocks[double_offset].block, (char *) &single_indirect);
 		return;	
 	}
 
@@ -191,14 +187,16 @@ void set_inode_block(inode * node, blocknum block, int offset) {
 		indirect single;
 		dread(node->single_indirect.block, (char *) &single);
 		single.blocks[offset] = block;
+		dwrite(node->single_indirect.block, (char *) &single);
 		return;
 	}
 	
 	node->direct[offset] = block;
+	dwrite(inode_block.block, (char *)node);
 	return;
 }
 
-void write_inode_block(inode * node, char * data, int offset) {
+void write_inode_block(inode * node, blocknum inode_block, char * data, int offset) {
 	blocknum block = get_inode_block(node, offset);
 	//Get a free block from the vcb
 	if(!block.valid) {
@@ -211,7 +209,7 @@ void write_inode_block(inode * node, char * data, int offset) {
 	}
 
 	dwrite(block.block, data);
-	set_inode_block(node, block, offset);
+	set_inode_block(node, inode_block, block, offset);
 }
 
 void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
@@ -341,12 +339,11 @@ static void vfs_unmount (void *private_data) {
  *
  */
 static int vfs_getattr(const char *path, struct stat *stbuf) {
-  fprintf(stderr, "vfs_getattr called\n");
-
 	//until multidirectory is implemented, our_node is always the root dnode
 	dnode our_node = root;
 	//direntry our_direntry;
 	const char * name;
+	direntry tmp;
 
 	if(strcmp(path, "/") == 0) {
 		our_node = root;
@@ -357,7 +354,6 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 		
 		//iterate through name to find nested directories
 
-		direntry tmp;
 
 		//TODO: Recurse on "our_node" for  multi-level directories
 		if(file_exists(&our_node, name, &tmp)) {
@@ -573,7 +569,6 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
                     struct fuse_file_info *fi)
 {
 	int bytes_read = 0;
-
 	char * name = path + 1;
 
 	direntry tmp;
@@ -582,6 +577,7 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 	if(!file_exists(&our_node, name, &tmp)) {
 		return 0;
 	}
+	
 	inode node;
 	dread(tmp.block.block, (char *)&node);
 
@@ -597,10 +593,13 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 		++startblock;
 	}	
 
+	printf("bytes_read, size, offset: %d, %lu, %lu\n", bytes_read, size, offset);
+
 	while(bytes_read < size) {
 		block = get_inode_block(&node, startblock);
 		if(!block.valid) { break; }
 		dread(block.block, data);
+
 		if(size - bytes_read < BLOCKSIZE) {
 			memcpy(buf + bytes_read, data, size - bytes_read);
 			bytes_read = size;
@@ -635,16 +634,16 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 
 	char * name = path + 1;
 	dnode our_node = root;
-	direntry tmp;
+	direntry inode_entry;
 	
 	//Can't find the file specified
-	if(!file_exists(&our_node, name, &tmp)) {
+	if(!file_exists(&our_node, name, &inode_entry)) {
 		printf("File does not exist!");
 		return 0;
 	}
 
 	inode node;
-	dread(tmp.block.block, (char *)&node);
+	dread(inode_entry.block.block, (char *)&node);
 
 	int writeblock = offset / BLOCKSIZE;
 	char data[BLOCKSIZE];
@@ -653,7 +652,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 		blocknum block = get_inode_block(&node, writeblock);		
 		dread(block.block, data);
 		memcpy(data + BLOCKSIZE - (offset % BLOCKSIZE), buf, offset % BLOCKSIZE); 
-		write_inode_block(&node, data, writeblock);
+		write_inode_block(&node, inode_entry.block, data, writeblock);
 		writeblock++;
 		bytes_written = offset % BLOCKSIZE;
 	}
@@ -662,14 +661,19 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 		if(size - bytes_written < BLOCKSIZE) {
 			memset(data, 0, BLOCKSIZE);
 			memcpy(data, buf + bytes_written, size - bytes_written);
-			write_inode_block(&node, data, writeblock);
+			write_inode_block(&node, inode_entry.block, data, writeblock);
 			bytes_written = size;	
 		} else {
-			write_inode_block(&node, buf + bytes_written, writeblock);
+			write_inode_block(&node, inode_entry.block, buf + bytes_written, writeblock);
 			bytes_written += BLOCKSIZE;
 		}
 		writeblock++;
 	}
+
+	if(offset + size > node.size) {
+		node.size = offset + size;
+		dwrite(inode_entry.block.block, (char *)&node);
+	}	
 
   return bytes_written;
 }
@@ -816,6 +820,39 @@ static int vfs_truncate(const char *file, off_t offset)
 
   /* 3600: NOTE THAT ANY BLOCKS FREED BY THIS OPERATION SHOULD
            BE AVAILABLE FOR OTHER FILES TO USE. */
+	char * name;
+	if(file[0] == '/') {
+		name = file + 1;
+	} else {
+		name = file;
+	}	
+
+	direntry inode_entry;
+	if(!file_exists(&root, name, &inode_entry)) {
+		return 0;
+	}
+	
+	inode node;
+	dread(inode_entry.block.block, (char *)&node);
+
+	if(offset > node.size) { return 0; }
+	int block_to_remove = 0;
+	if(offset != 0) {
+		block_to_remove = (offset -1)/ BLOCKSIZE + 1;
+	}
+	blocknum nullblock = (blocknum){0, 0};
+
+	for(int i = 0; i + block_to_remove <= (node.size -1) / BLOCKSIZE; ++i){
+		blocknum block = get_inode_block(&node, block_to_remove + i);
+		if(!block.valid) { break; }
+		set_inode_block(&node, inode_entry.block, nullblock, block_to_remove + 1);
+		release_block(block.block);
+	}
+
+	if(offset < node.size) {
+		node.size = offset;
+		dwrite(inode_entry.block.block, (char *)&node);
+	}
 
     return 0;
 }
