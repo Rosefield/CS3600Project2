@@ -692,13 +692,17 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 		bytes_written = remainder;
 	}
 
+    /* while we still have data to write */
 	while(bytes_written < size) {
 		if(size - bytes_written < BLOCKSIZE) {
+        /* if we have less than a block left */
 			memset(data, 0, BLOCKSIZE);
 			memcpy(data, buf + bytes_written, size - bytes_written);
 			write_inode_block(&node, inode_entry.block, data, writeblock);
-			bytes_written = size;	
+            bytes_written += size - bytes_written;
+            assert(bytes_written == size);
 		} else {
+        /* if we have more than a block left */
 			write_inode_block(&node, inode_entry.block, buf + bytes_written, writeblock);
 			bytes_written += BLOCKSIZE;
 		}
