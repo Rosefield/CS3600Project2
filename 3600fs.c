@@ -176,7 +176,8 @@ blocknum get_inode_block(inode * node, unsigned int offset) {
 
 
 	//In double indirect
-	if(offset > 110 + 128) {
+	/* if(offset > 110 + 128) { */
+	if(offset > (110 + 128) - 1) {
 		indirect double_indirect;
 		dread(node->double_indirect.block, (char *)&double_indirect);
 
@@ -196,7 +197,7 @@ blocknum get_inode_block(inode * node, unsigned int offset) {
 	}
 
 	//In single indirect
-	if(offset > 110) {
+	if(offset > 110 - 1) {
 		offset -= 110;
 		indirect single;
 		dread(node->single_indirect.block, (char *) &single);
@@ -677,13 +678,18 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	int writeblock = offset / BLOCKSIZE;
 	char data[BLOCKSIZE];
 
+    /* if offset isn't aligned on a block */
 	if(offset % BLOCKSIZE != 0) {
 		blocknum block = get_inode_block(&node, writeblock);		
 		dread(block.block, data);
-		memcpy(data + BLOCKSIZE - (offset % BLOCKSIZE), buf, offset % BLOCKSIZE); 
+        /* bytes at the beginning of the block that shouldn't change */
+        unsigned int internal_offset = offset % BLOCKSIZE;
+        /* everything else in the block, which will be (over)written */
+        unsigned int remainder = BLOCKSIZE - internal_offset;
+        memcpy(data + internal_offset, buf, remainder);
 		write_inode_block(&node, inode_entry.block, data, writeblock);
 		writeblock++;
-		bytes_written = offset % BLOCKSIZE;
+		bytes_written = remainder;
 	}
 
 	while(bytes_written < size) {
