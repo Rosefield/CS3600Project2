@@ -46,12 +46,15 @@ dirent root_dirent;
 //Helper functions
 
 /*
-*d is the dirent to search in, 
-*name is the value to search for
-*de is a return value, if this is non-null it will copy the direntry for the found file
-*returns 1 if the file is found, 0 otherwise
-*/
-
+ * name_in_dirent - search dirent for filename
+ *
+ * Utility function used by file_exists.
+ *
+ * d is the dirent to search in,
+ * name is the value to search for
+ * de is a return value, if this is non-null it will copy the direntry for the found file
+ * returns 1 if the file is found, 0 otherwise
+ */
 int name_in_dirent(dirent d, char * name, direntry * de) {
 	for(int x = 0; x < ENTRIES_IN_DIR; ++x) {
 		if(strcmp(d.entries[x].name, name) == 0) {
@@ -74,13 +77,17 @@ void vcb_update_free() {
     dwrite(0, (char*) &head);
 }
 
-//de is an optional parameter, that when passed in, and is not null, will be set to the
-//direntry for the found file
+/*
+ * file_exists - search directory for file
+ *
+ * de is an optional parameter, that when passed in, and is not null, will be set to the
+ * direntry for the found file
+ */
 int file_exists(dnode * dir, char * name, direntry * de) {
 	if(dir->size == 0) {
 		return 0;
 	}
-	
+
 	//files in the double indirects
 	if(dir->size > 110 * ENTRIES_IN_DIR + 128*ENTRIES_IN_DIR) {
 		indirect double_indirect;
@@ -89,17 +96,17 @@ int file_exists(dnode * dir, char * name, direntry * de) {
 		for(int i = 0; i < 128; ++i) {
 			indirect single;
 			dread(double_indirect.blocks[i].block, (char *) &single);
-			
+
 			for(int x = 0; x < 128; ++x) {
 				dirent tmp;
 				dread(single.blocks[x].block, (char *) &tmp);
 				if(name_in_dirent(tmp, name, de)) {
 					return 1;
 				}
-		
+
 			}
 		}
-	}	
+	}
 
 	//files in the single indirect
 	if(dir->size > 110*ENTRIES_IN_DIR) {
@@ -123,8 +130,8 @@ int file_exists(dnode * dir, char * name, direntry * de) {
 		if(name_in_dirent(tmp, name, de)) {
 			return 1;
 		}
-	}	
-	
+	}
+
 	return 0;
 }
 
@@ -134,10 +141,10 @@ int file_exists(dnode * dir, char * name, direntry * de) {
 int path_exists(const char * path, direntry * de) {
 	if(strcmp("/", path) == 0) {
 		return 1;
-	}	
+	}
 
 	dnode our_node = root;
-	//Path + 1 to removet the initial 
+	//Path + 1 to removet the initial
 	char * name = path +1;
 	name = strtok(name, "/");
 
@@ -150,11 +157,18 @@ int path_exists(const char * path, direntry * de) {
 
 		name = strtok(NULL, "/");
 	}
-	
+
 	*de = tmp;
 	return 1;
 }
 
+/*
+ * get_inode_block -
+ *
+ * Returns blocknum of data block at offset.
+ *
+ * @offset: inode block index
+ */
 blocknum get_inode_block(inode * node, unsigned int offset) {
 	if(offset > node->size) {
 		return (blocknum){0, 0};
@@ -162,30 +176,35 @@ blocknum get_inode_block(inode * node, unsigned int offset) {
 
 
 	//In double indirect
-	if(offset > 110 + 128) {
+	/* if(offset > 110 + 128) { */
+	if(offset > (110 + 128) - 1) {
 		indirect double_indirect;
 		dread(node->double_indirect.block, (char *)&double_indirect);
-		
+
+        /* normalize offset value so that first double indirect block is at
+           offset 0 */
 		offset -= 110 + 128;
+        /* get double indirect index of block */
 		int double_offset = offset / 128 % 128;
 
 		indirect single_indirect;
 		dread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
-		
+
+        /* get single indirect offset using normalized offset */
 		int single_offset = offset % 128;
-		return single_indirect.blocks[single_offset];	
+		return single_indirect.blocks[single_offset];
 
 	}
 
 	//In single indirect
-	if(offset > 110) {
+	if(offset > 110 - 1) {
 		offset -= 110;
 		indirect single;
 		dread(node->single_indirect.block, (char *) &single);
 		return single.blocks[offset];
 
 	}
-	
+
 	return node->direct[offset];
 
 }
@@ -195,17 +214,17 @@ void set_inode_block(inode * node, blocknum inode_block, blocknum block, unsigne
 	if(offset > 110 + 128) {
 		indirect double_indirect;
 		dread(node->double_indirect.block, (char *)&double_indirect);
-		
+	
 		offset -= 110 + 128;
 		int double_offset = offset / 128 % 128;
 
 		indirect single_indirect;
 		dread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
-		
+	
 		int single_offset = offset % 128;
 		single_indirect.blocks[single_offset] = block;
 		dwrite(double_indirect.blocks[double_offset].block, (char *) &single_indirect);
-		return;	
+		return;
 	}
 
 	//In single indirect
@@ -659,22 +678,31 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	int writeblock = offset / BLOCKSIZE;
 	char data[BLOCKSIZE];
 
+    /* if offset isn't aligned on a block */
 	if(offset % BLOCKSIZE != 0) {
 		blocknum block = get_inode_block(&node, writeblock);		
 		dread(block.block, data);
-		memcpy(data + BLOCKSIZE - (offset % BLOCKSIZE), buf, offset % BLOCKSIZE); 
+        /* bytes at the beginning of the block that shouldn't change */
+        unsigned int internal_offset = offset % BLOCKSIZE;
+        /* everything else in the block, which will be (over)written */
+        unsigned int remainder = BLOCKSIZE - internal_offset;
+        memcpy(data + internal_offset, buf, remainder);
 		write_inode_block(&node, inode_entry.block, data, writeblock);
 		writeblock++;
-		bytes_written = offset % BLOCKSIZE;
+		bytes_written = remainder;
 	}
 
+    /* while we still have data to write */
 	while(bytes_written < size) {
 		if(size - bytes_written < BLOCKSIZE) {
+        /* if we have less than a block left */
 			memset(data, 0, BLOCKSIZE);
 			memcpy(data, buf + bytes_written, size - bytes_written);
 			write_inode_block(&node, inode_entry.block, data, writeblock);
-			bytes_written = size;	
+            bytes_written += size - bytes_written;
+            assert(bytes_written == size);
 		} else {
+        /* if we have more than a block left */
 			write_inode_block(&node, inode_entry.block, buf + bytes_written, writeblock);
 			bytes_written += BLOCKSIZE;
 		}
