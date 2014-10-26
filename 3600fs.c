@@ -122,8 +122,42 @@ blocknum get_node_block(inode * node, unsigned int offset) {
 	//This function will return a "null" blocknumber {0, 0} if the blocknum it is supposed to read
 	//or return is not valid
 
+	//In triple indirect
+	if(offset >= NUM_DIRECT + 128 + 128 * 128) {
+		if(!node->triple_indirect.valid) {
+			return (blocknum){0,0};
+		}
+		indirect triple_indirect;
+		cdread(node->triple_indirect.block, (char *)&triple_indirect);
+
+		offset -= NUM_DIRECT + 128 + 128 * 128;
+
+		int triple_offset = offset / (128 * 128) % 128;
+		
+		if(!triple_indirect.blocks[triple_offset].valid) {
+			return (blocknum){0,0};
+		}
+
+		indirect double_indirect;
+		cdread(triple_indirect.blocks[triple_offset].block, (char *)&double_indirect);
+
+		int double_offset = offset / 128 % 128;
+		//If there doesn't exist a single_indirect block at the double_offset
+		if(!double_indirect.blocks[double_offset].valid) {
+			return (blocknum){0,0};
+		}
+		indirect single_indirect;
+		cdread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
+
+        /* get single indirect offset using normalized offset */
+		int single_offset = offset % 128;
+		return single_indirect.blocks[single_offset];
+
+	}
+
+
 	//In double indirect
-	if(offset >= 110 + 128) {
+	if(offset >= NUM_DIRECT + 128) {
 		//No double indirect block
 		if(!node->double_indirect.valid) {
 			return (blocknum){0,0};
@@ -131,7 +165,7 @@ blocknum get_node_block(inode * node, unsigned int offset) {
 		indirect double_indirect;
 		cdread(node->double_indirect.block, (char *)&double_indirect);
 
-		offset -= 110 + 128;
+		offset -= NUM_DIRECT + 128;
 
 		int double_offset = offset / 128 % 128;
 		//If there doesn't exist a single_indirect block at the double_offset
@@ -148,8 +182,8 @@ blocknum get_node_block(inode * node, unsigned int offset) {
 	}
 
 	//In single indirect
-	if(offset >= 110) {
-		offset -= 110;
+	if(offset >= NUM_DIRECT) {
+		offset -= NUM_DIRECT;
 		//No single indirect block
 		if(!node->single_indirect.valid) {
 			return (blocknum){0,0};
@@ -177,8 +211,48 @@ blocknum get_node_block(inode * node, unsigned int offset) {
 *
 **/
 void set_node_block(inode * node, blocknum inode_block, blocknum block, unsigned int offset) {
+	
+	//In triple indirect
+	if(offset >= NUM_DIRECT + 128 + 128 * 128) {
+		if(!node->triple_indirect.valid) {
+			node->triple_indirect = head.free;
+			vcb_update_free();
+			cdwrite(inode_block.block, (char *)node);
+		}
+		indirect triple_indirect;
+		cdread(node->triple_indirect.block, (char *)&triple_indirect);
+
+		offset -= NUM_DIRECT + 128 + 128 * 128;
+
+		int triple_offset = offset / (128 * 128) % 128;
+		
+		if(!triple_indirect.blocks[triple_offset].valid) {
+			triple_indirect.blocks[triple_offset] = head.free;
+			vcb_update_free();
+			cdwrite(node->triple_indirect.block, (char *)&triple_indirect);
+		}
+
+		indirect double_indirect;
+		cdread(triple_indirect.blocks[triple_offset].block, (char *)&double_indirect);
+
+		int double_offset = offset / 128 % 128;
+		//If there doesn't exist a single_indirect block at the double_offset
+		if(!double_indirect.blocks[double_offset].valid) {
+			double_indirect.blocks[double_offset] = head.free;
+			vcb_update_free();
+			cdwrite(triple_indirect.blocks[triple_offset].block, (char *)&double_indirect);
+		}
+		indirect single_indirect;
+		cdread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
+	
+		int single_offset = offset % 128;
+		single_indirect.blocks[single_offset] = block;
+		cdwrite(double_indirect.blocks[double_offset].block, (char *) &single_indirect);
+		return;
+	}
+
 	//In double indirect
-	if(offset >= 110 + 128) {
+	if(offset >= NUM_DIRECT + 128) {
 		indirect double_indirect;
 		//If the node doesn't currently have a double_indirect block allocate one
 		if(!node->double_indirect.valid) {
@@ -188,7 +262,7 @@ void set_node_block(inode * node, blocknum inode_block, blocknum block, unsigned
 		}
 		cdread(node->double_indirect.block, (char *)&double_indirect);
 	
-		offset -= 110 + 128;
+		offset -= NUM_DIRECT + 128;
 		int double_offset = offset / 128 % 128;
 
 		indirect single_indirect;
@@ -207,8 +281,8 @@ void set_node_block(inode * node, blocknum inode_block, blocknum block, unsigned
 	}
 
 	//In single indirect
-	if(offset >= 110) {
-		offset -= 110;
+	if(offset >= NUM_DIRECT) {
+		offset -= NUM_DIRECT;
 		indirect single;
 		//If the node doesn't have a single_indirect block, allocate it.
 		if(!node->single_indirect.valid) {
@@ -263,7 +337,7 @@ int file_exists(dnode * dir, char * name, direntry * de) {
 	unsigned offset = 0;
 
 	//Iterate over dirents in dir, check if they contain the name we are looking for
-	for(; offset < 128 * 128 + 128 + 110; ++offset) {
+	for(; offset < MAX_BLOCKS; ++offset) {
 		blocknum block = get_node_block(dir, offset);
 		if(!block.valid) {
 			return 0;
@@ -325,7 +399,7 @@ int path_exists(const char * path, direntry * de) {
 void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
 	unsigned offset = 0;
 
-	for(; offset < 128 * 128 + 128 + 110; ++offset) {
+	for(; offset < MAX_BLOCKS; ++offset) {
 		
 		blocknum write_block = get_node_block(dir, offset);
 
@@ -692,7 +766,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	unsigned count = offset;
 
 	//Iterate over each block in the directory, and get its file contents
-	for(; outer_offset < (128 * 128 + 128 + 110); ++outer_offset) {
+	for(; outer_offset < MAX_BLOCKS; ++outer_offset) {
 		if(count >= dir.size) { return 0; }
 		blocknum block = get_node_block(&dir, outer_offset);
 		if(!block.valid) {
@@ -991,7 +1065,7 @@ static int vfs_delete(const char *path)
 		inode node;
 		cdread(de.block.block, (char *)&node);
 		//Remove all blocks that the file contains
-		for(unsigned offset = 0; offset < 128 * 128 + 128 + 110; ++offset) {
+		for(unsigned offset = 0; offset < MAX_BLOCKS; ++offset) {
 			blocknum block = get_node_block(&node, offset);
 			if(!block.valid) {
 				break;
@@ -1016,7 +1090,7 @@ static int vfs_delete(const char *path)
 		//Find the directory containing our file
 		dnode containing_dir;
 		cdread(contain_de.block.block, (char *)&containing_dir);
-		for(unsigned offset = 0; offset < 128 * 128 + 128 + 110; ++offset) {
+		for(unsigned offset = 0; offset < MAX_BLOCKS; ++offset) {
 			blocknum block = get_node_block(&containing_dir, offset);
 			if(!block.valid) {
 				continue;
