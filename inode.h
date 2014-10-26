@@ -17,10 +17,13 @@ typedef struct vcb_t{
 
 	blocknum free; // 4
 
-	char name[496]; // 496 * 1
+	char dirty;
+
+	char name[495]; // 495 * 1
 } vcb;
 
-
+#define NUM_DIRECT 109
+#define MAX_BLOCKS 2113773 //109 + 128 + 128 * 128 + 128 * 128 * 128
 typedef struct dnode_t{
 	unsigned int size; //4
 	uid_t user; // 4
@@ -31,9 +34,10 @@ typedef struct dnode_t{
 	struct timespec modify_time;  // 16 
 	struct timespec create_time; // 16
 	
-	blocknum direct[110]; // 110 * 4
+	blocknum direct[109]; // 109 * 4
 	blocknum single_indirect; // 4
 	blocknum double_indirect; // 4
+	blocknum triple_indirect; // 4
 } dnode;
 
 typedef struct indirect_t {
@@ -64,3 +68,13 @@ typedef struct free_t {
 	//Junk data to make free take up 512bytes of space
 	char filler[508]; // 508 * 1
 } free_block;
+
+typedef struct {
+    unsigned int blocknum;
+    char data[512];
+    // TODO: add dirty bit to tell if need to write to disk upon eviction
+} cache_ent;
+
+typedef struct {
+    cache_ent entries[3];
+} cache;

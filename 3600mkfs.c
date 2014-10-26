@@ -38,7 +38,8 @@ void myformat(int size) {
 	myvcb.root = (blocknum){.block=1, .valid=1};
 	myvcb.free = (blocknum){.block=3, .valid=1};			
 	strcpy(myvcb.name, "Why am I here?");
-	
+	myvcb.dirty = 0;	
+
 	char tmp[BLOCKSIZE];
 	memcpy(tmp, &myvcb, sizeof(vcb));
 	dwrite(0, tmp);
