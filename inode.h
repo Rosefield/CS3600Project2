@@ -64,3 +64,13 @@ typedef struct free_t {
 	//Junk data to make free take up 512bytes of space
 	char filler[508]; // 508 * 1
 } free_block;
+
+typedef struct {
+    unsigned int blocknum;
+    char data[512];
+    // TODO: add dirty bit to tell if need to write to disk upon eviction
+} cache_ent;
+
+typedef struct {
+    cache_ent entries[3];
+} cache;

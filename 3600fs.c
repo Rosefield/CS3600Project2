@@ -43,6 +43,35 @@ vcb head;
 dnode root;
 dirent root_dirent;
 
+cache *c;
+
+// Cache Functions
+
+int cdread(int blocknum, char *buf) {
+
+    /* only cache vcb, root dnode, root dirent */
+    if (blocknum >= 0 && blocknum <= 2) {
+        memcpy(buf, c->entries[blocknum].data, BLOCKSIZE);
+        return BLOCKSIZE;
+    } else {
+        return dread(blocknum, buf);
+    }
+
+    return -1;
+}
+
+
+int cdwrite(int blocknum, char *buf){
+    if (blocknum >= 0 && blocknum <= 2) {
+        memcpy(c->entries[blocknum].data, buf, BLOCKSIZE);
+        return BLOCKSIZE;
+    } else {
+        return dwrite(blocknum, buf);
+    }
+
+    return -1;
+}
+
 //Helper functions
 
 /*
@@ -432,7 +461,17 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
 	}
 
 
-  return NULL;
+    /* initialize cache */
+    c = calloc(1, sizeof(cache));
+    for (int i = 0; i < 3; i++) {
+        c->entries[i].blocknum = i;
+    }
+
+    memcpy(c->entries[0].data, (char*)&head, BLOCKSIZE);
+    memcpy(c->entries[1].data, (char*)&root, BLOCKSIZE);
+    memcpy(c->entries[2].data, (char*)&root_dirent, BLOCKSIZE);
+
+    return NULL;
 }
 
 /*
@@ -448,6 +487,12 @@ static void vfs_unmount (void *private_data) {
 
 	//Add metadata about write state, a "clean" tag
 
+  // TODO: write cache to disk
+    for (int i = 0; i < 3; i++) {
+        dwrite(i, c->entries[i].data);
+    }
+
+    free(c);
 
   // Do not touch or move this code; unconnects the disk
   dunconnect();
