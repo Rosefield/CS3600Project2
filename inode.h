@@ -17,7 +17,9 @@ typedef struct vcb_t{
 
 	blocknum free; // 4
 
-	char name[496]; // 496 * 1
+	char dirty;
+
+	char name[495]; // 496 * 1
 } vcb;
 
 

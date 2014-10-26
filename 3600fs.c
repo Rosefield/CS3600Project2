@@ -40,8 +40,6 @@
 #include "inode.h"
 
 vcb head;
-dnode root;
-dirent root_dirent;
 
 cache *c;
 
@@ -102,7 +100,6 @@ void vcb_update_free() {
 
 	cdread(head.free.block, (char *)&tmp);
 
-
 	//Initialize the removed free block to 0s
 	char data[BLOCKSIZE];
 	memset(data, 0, BLOCKSIZE);
@@ -112,7 +109,145 @@ void vcb_update_free() {
     cdwrite(0, (char*) &head);
 }
 
-blocknum get_inode_block(inode * dir, unsigned offset);
+/*
+ * get_node_block -
+ *
+ * Returns blocknum of data block at offset. Goes through direct, indirect, and double_indirect blocks
+ *
+ * @node: the node to read from
+ * @offset: node block index
+ */
+blocknum get_node_block(inode * node, unsigned int offset) {
+
+	//This function will return a "null" blocknumber {0, 0} if the blocknum it is supposed to read
+	//or return is not valid
+
+	//In double indirect
+	if(offset >= 110 + 128) {
+		//No double indirect block
+		if(!node->double_indirect.valid) {
+			return (blocknum){0,0};
+		}
+		indirect double_indirect;
+		cdread(node->double_indirect.block, (char *)&double_indirect);
+
+		offset -= 110 + 128;
+
+		int double_offset = offset / 128 % 128;
+		//If there doesn't exist a single_indirect block at the double_offset
+		if(!double_indirect.blocks[double_offset].valid) {
+			return (blocknum){0,0};
+		}
+		indirect single_indirect;
+		cdread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
+
+        /* get single indirect offset using normalized offset */
+		int single_offset = offset % 128;
+		return single_indirect.blocks[single_offset];
+
+	}
+
+	//In single indirect
+	if(offset >= 110) {
+		offset -= 110;
+		//No single indirect block
+		if(!node->single_indirect.valid) {
+			return (blocknum){0,0};
+		}
+		indirect single;
+		cdread(node->single_indirect.block, (char *) &single);
+		if(!single.blocks[offset].valid) {
+			return (blocknum){0,0};
+		}
+		return single.blocks[offset];
+
+	}
+
+	if(!node->direct[offset].valid) {
+		return (blocknum){0,0};
+	}
+
+	return node->direct[offset];
+}
+
+/**
+* set_node_block
+*
+* Given a node, finds the offset-th block in node, and sets it to block. 
+*
+**/
+void set_node_block(inode * node, blocknum inode_block, blocknum block, unsigned int offset) {
+	//In double indirect
+	if(offset >= 110 + 128) {
+		indirect double_indirect;
+		//If the node doesn't currently have a double_indirect block allocate one
+		if(!node->double_indirect.valid) {
+			node->double_indirect = head.free;
+			vcb_update_free();
+			cdwrite(inode_block.block, (char *)node);
+		}
+		cdread(node->double_indirect.block, (char *)&double_indirect);
+	
+		offset -= 110 + 128;
+		int double_offset = offset / 128 % 128;
+
+		indirect single_indirect;
+		//If there isn't a single indirect block at the offset, allocate it
+		if(!double_indirect.blocks[double_offset].valid) {
+			double_indirect.blocks[double_offset] = head.free;
+			vcb_update_free();
+			cdwrite(node->double_indirect.block, (char *)&double_indirect);
+		}
+		cdread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
+	
+		int single_offset = offset % 128;
+		single_indirect.blocks[single_offset] = block;
+		cdwrite(double_indirect.blocks[double_offset].block, (char *) &single_indirect);
+		return;
+	}
+
+	//In single indirect
+	if(offset >= 110) {
+		offset -= 110;
+		indirect single;
+		//If the node doesn't have a single_indirect block, allocate it.
+		if(!node->single_indirect.valid) {
+			node->single_indirect = head.free;
+			vcb_update_free();
+			cdwrite(inode_block.block, (char *)node);
+		}
+		cdread(node->single_indirect.block, (char *) &single);
+		single.blocks[offset] = block;
+		cdwrite(node->single_indirect.block, (char *) &single);
+		return;
+	}
+	
+	node->direct[offset] = block;
+	cdwrite(inode_block.block, (char *)node);
+	return;
+}
+
+/**
+*write_node_block - Takes a node, writes data to the offset-th block, or if that block
+*doesn't exist, allocate it, write to it, and then set the offset-th block
+*
+**/
+void write_node_block(inode * node, blocknum inode_block, char * data, unsigned int offset) {
+	blocknum block = get_node_block(node, offset);
+	//Get a free block from the vcb
+	if(!block.valid) {
+		block = head.free;
+		if(!block.valid) {
+		//No more free blocks!
+			return;
+		}
+		vcb_update_free();
+		//Update the node to contain the new block
+		set_node_block(node, inode_block, block, offset);
+	}
+
+	cdwrite(block.block, data);
+}
 
 /*
  * file_exists - search directory for file
@@ -129,7 +264,7 @@ int file_exists(dnode * dir, char * name, direntry * de) {
 
 	//Iterate over dirents in dir, check if they contain the name we are looking for
 	for(; offset < 128 * 128 + 128 + 110; ++offset) {
-		blocknum block = get_inode_block(dir, offset);
+		blocknum block = get_node_block(dir, offset);
 		if(!block.valid) {
 			return 0;
 		}
@@ -183,136 +318,16 @@ int path_exists(const char * path, direntry * de) {
 	return 1;
 }
 
-/*
- * get_inode_block -
- *
- * Returns blocknum of data block at offset.
- *
- * @offset: inode block index
- */
-blocknum get_inode_block(inode * node, unsigned int offset) {
-
-	//This function will return a "null" blocknumber {0, 0} if the blocknum it is supposed to read
-	//or return is not valid
-
-	//In double indirect
-	if(offset >= 110 + 128) {
-		//No double indirect block
-		if(!node->double_indirect.valid) {
-			return (blocknum){0,0};
-		}
-		indirect double_indirect;
-		cdread(node->double_indirect.block, (char *)&double_indirect);
-
-		offset -= 110 + 128;
-
-		int double_offset = offset / 128 % 128;
-		//If there doesn't exist a single_indirect block at the double_offset
-		if(!double_indirect.blocks[double_offset].valid) {
-			return (blocknum){0,0};
-		}
-		indirect single_indirect;
-		cdread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
-
-        /* get single indirect offset using normalized offset */
-		int single_offset = offset % 128;
-		return single_indirect.blocks[single_offset];
-
-	}
-
-	//In single indirect
-	if(offset >= 110) {
-		offset -= 110;
-		//No single indirect block
-		if(!node->single_indirect.valid) {
-			return (blocknum){0,0};
-		}
-		indirect single;
-		cdread(node->single_indirect.block, (char *) &single);
-		if(!single.blocks[offset].valid) {
-			return (blocknum){0,0};
-		}
-		return single.blocks[offset];
-
-	}
-
-	if(!node->direct[offset].valid) {
-		return (blocknum){0,0};
-	}
-
-	return node->direct[offset];
-}
-
-void set_inode_block(inode * node, blocknum inode_block, blocknum block, unsigned int offset) {
-	//In double indirect
-	if(offset >= 110 + 128) {
-		indirect double_indirect;
-		if(!node->double_indirect.valid) {
-			node->double_indirect = head.free;
-			vcb_update_free();
-			cdwrite(inode_block.block, (char *)node);
-		}
-		cdread(node->double_indirect.block, (char *)&double_indirect);
-	
-		offset -= 110 + 128;
-		int double_offset = offset / 128 % 128;
-
-		indirect single_indirect;
-		if(!double_indirect.blocks[double_offset].valid) {
-			double_indirect.blocks[double_offset] = head.free;
-			vcb_update_free();
-			cdwrite(node->double_indirect.block, (char *)&double_indirect);
-		}
-		cdread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
-	
-		int single_offset = offset % 128;
-		single_indirect.blocks[single_offset] = block;
-		cdwrite(double_indirect.blocks[double_offset].block, (char *) &single_indirect);
-		return;
-	}
-
-	//In single indirect
-	if(offset >= 110) {
-		offset -= 110;
-		indirect single;
-		if(!node->single_indirect.valid) {
-			node->single_indirect = head.free;
-			vcb_update_free();
-			cdwrite(inode_block.block, (char *)node);
-		}
-		cdread(node->single_indirect.block, (char *) &single);
-		single.blocks[offset] = block;
-		cdwrite(node->single_indirect.block, (char *) &single);
-		return;
-	}
-	
-	node->direct[offset] = block;
-	cdwrite(inode_block.block, (char *)node);
-	return;
-}
-
-void write_inode_block(inode * node, blocknum inode_block, char * data, unsigned int offset) {
-	blocknum block = get_inode_block(node, offset);
-	//Get a free block from the vcb
-	if(!block.valid) {
-		block = head.free;
-		if(!block.valid) {
-		//No more free blocks!
-			return;
-		}
-		vcb_update_free();
-	}
-
-	cdwrite(block.block, data);
-	set_inode_block(node, inode_block, block, offset);
-}
-
+/**
+* add_direntry - Adds our_direntry to the first free (!block.valid) spot in dir
+*
+*/
 void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
 	unsigned offset = 0;
 
 	for(; offset < 128 * 128 + 128 + 110; ++offset) {
 		
-		blocknum write_block = get_inode_block(dir, offset);
+		blocknum write_block = get_node_block(dir, offset);
 
 		/* we get the first root dirent for free (from 3600mkfs) but afterwards
            we need to allocate dirents
@@ -323,7 +338,7 @@ void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
 		if(!write_block.valid) {
 			write_block = head.free;
 			vcb_update_free();
-			set_inode_block(dir, (blocknum){dir_block, 1}, write_block, offset);
+			set_node_block(dir, (blocknum){dir_block, 1}, write_block, offset);
 		}
 		dirent tmp;
 		cdread(write_block.block, (char *)&tmp);
@@ -419,19 +434,23 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
        AND LOAD ANY DATA STRUCTURES INTO MEMORY */
 
     //read vcb
+	dnode root;
+	dirent root_dirent;
 
     dread(0, (char *)&head);
 
     if(head.magic != 0x77) {
         //throw an error
-        printf("Magic is incorrect.\n");
+        perror("Magic is incorrect.\n");
         return NULL;
     }
 
-    if(!head.free.valid) {
-		printf("free block is wrong.\n");
-		return NULL;
+	if(head.dirty) {
+		perror("Filesystem wasn't unmounted correctly");
 	}
+
+	head.dirty = 1;
+	dwrite(0, (char *)&head);
 
 	dread(head.root.block, (char *)&root);
 
@@ -477,11 +496,15 @@ static void vfs_unmount (void *private_data) {
 	//Add metadata about write state, a "clean" tag
 
   // TODO: write cache to disk
-    for (int i = 0; i < 3; i++) {
+	
+	for (int i = 0; i < 3; i++) {
         dwrite(i, c->entries[i].data);
     }
 
     free(c);
+
+	head.dirty = 0;
+	dwrite(0, (char *)&head);
 
   // Do not touch or move this code; unconnects the disk
   dunconnect();
@@ -574,7 +597,8 @@ static int vfs_mkdir(const char *path, mode_t mode) {
 	if(0) {
 		return -EACCES;
 	}
-
+	
+	//Create and write the new directory
 	dnode node;
 	init_dnode(&node);
 	node.mode = mode;
@@ -584,6 +608,7 @@ static int vfs_mkdir(const char *path, mode_t mode) {
 
 	cdwrite(dnode_block.block, (char *)&node);
 
+	//Initialize the first dirent for the new dnode, write to disk
 	dirent first_dirent;
 	init_dirent(&first_dirent, dnode_block);
 	cdwrite(node.direct[0].block, (char *)&first_dirent);
@@ -599,6 +624,7 @@ static int vfs_mkdir(const char *path, mode_t mode) {
 	//free the malloc
 	free(name);
 	
+	//Create direntry to contain the new dir
 	direntry new_direntry;
 	strncpy(new_direntry.name, filename, sizeof(new_direntry.name));
 	
@@ -607,6 +633,7 @@ static int vfs_mkdir(const char *path, mode_t mode) {
 	new_direntry.type = DIRENTRY_DIR;
 	new_direntry.block = dnode_block;
 
+	//Find the containing directory, and add our new direntry to it
 	dnode contain_dir;
 	if(strcmp("/", dir) == 0) {
 		cdread(1, (char *)&contain_dir);	
@@ -648,6 +675,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info *fi)
 {
 	dnode dir;
+	//Check for existance of the path, and if it exists read the dnode
 	if(strcmp(path, "/") == 0) {
 		cdread(1, (char *)&dir);
 	} else {
@@ -663,9 +691,10 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	unsigned inner_offset = offset % ENTRIES_IN_DIR;
 	unsigned count = offset;
 
+	//Iterate over each block in the directory, and get its file contents
 	for(; outer_offset < (128 * 128 + 128 + 110); ++outer_offset) {
 		if(count >= dir.size) { return 0; }
-		blocknum block = get_inode_block(&dir, outer_offset);
+		blocknum block = get_node_block(&dir, outer_offset);
 		if(!block.valid) {
 			continue;
 		}
@@ -758,6 +787,7 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
 	our_direntry.block = block_inode;	
 	
 	
+	//Find the containing directory
 	dnode our_node;
 	unsigned write_block;
 	if(strcmp(dir, "/") == 0) {
@@ -803,11 +833,13 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
                     struct fuse_file_info *fi)
 {
 	unsigned int bytes_read = 0;
+	//Check for existance of the path
 	direntry tmp;
 	if(!path_exists(path, &tmp)) {
 		return 0;
 	}
 	
+	//Initialize the node pointed to by path
 	inode node;
 	cdread(tmp.block.block, (char *)&node);
 
@@ -815,8 +847,10 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 	blocknum block;
 	unsigned int startblock = offset / BLOCKSIZE;
 
+	//If the offset isn't a multiple of the blocksize, we need to get only a portion of the 
+	//data from one of the blocks
 	if(offset % BLOCKSIZE != 0) {
-		block = get_inode_block(&node, startblock);
+		block = get_node_block(&node, startblock);
 		if(!block.valid) {
 			return 0;
 		}
@@ -829,10 +863,11 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 		++startblock;
 	}	
 
-	printf("bytes_read, size, offset: %d, %lu, %lu\n", bytes_read, size, offset);
-
+	//So long as there are sill bytes to read, read them
 	while(bytes_read < size) {
-		block = get_inode_block(&node, startblock);
+		block = get_node_block(&node, startblock);
+
+		//If we reach the end of the file, stop
 		if(!block.valid) { 
 			break; 
 		}
@@ -885,7 +920,7 @@ static int vfs_write(const char *path, const char *buf, size_t size, off_t offse
 
     /* if offset isn't aligned on a block */
 	if(offset % BLOCKSIZE != 0) {
-		blocknum block = get_inode_block(&node, writeblock);
+		blocknum block = get_node_block(&node, writeblock);
 
 		if(!block.valid) {
 			memset(data, 0, BLOCKSIZE);
@@ -899,7 +934,7 @@ static int vfs_write(const char *path, const char *buf, size_t size, off_t offse
         unsigned int remainder = BLOCKSIZE - internal_offset;
         memcpy(data + internal_offset, buf, remainder);
 
-		write_inode_block(&node, inode_entry.block, data, writeblock);
+		write_node_block(&node, inode_entry.block, data, writeblock);
 		writeblock++;
 		bytes_written = remainder;
 	}
@@ -910,12 +945,12 @@ static int vfs_write(const char *path, const char *buf, size_t size, off_t offse
         /* if we have less than a block left */
 			memset(data, 0, BLOCKSIZE);
 			memcpy(data, buf + bytes_written, size - bytes_written);
-			write_inode_block(&node, inode_entry.block, data, writeblock);
+			write_node_block(&node, inode_entry.block, data, writeblock);
             bytes_written += size - bytes_written;
             assert(bytes_written == size);
 		} else {
         /* if we have more than a block left */
-			write_inode_block(&node, inode_entry.block, buf + bytes_written, writeblock);
+			write_node_block(&node, inode_entry.block, buf + bytes_written, writeblock);
 			bytes_written += BLOCKSIZE;
 		}
 		writeblock++;
@@ -939,21 +974,25 @@ static int vfs_delete(const char *path)
   /* 3600: NOTE THAT THE BLOCKS CORRESPONDING TO THE FILE SHOULD BE MARKED
            AS FREE, AND YOU SHOULD MAKE THEM AVAILABLE TO BE USED WITH OTHER FILES */
 
+	//Cannot delete the root directory
 	if(strcmp(path, "/") == 0) {
 		return -EACCES;
 	}
 	
-	
+	//Check for existance of the path
 	direntry de;
 	if(!path_exists(path, &de)) {
 		printf("File not found\n");
 		return -ENOENT;
 	}
+
+	//If the path requested is a file, remove it
 	if(de.type == DIRENTRY_FILE) {
 		inode node;
 		cdread(de.block.block, (char *)&node);
+		//Remove all blocks that the file contains
 		for(unsigned offset = 0; offset < 128 * 128 + 128 + 110; ++offset) {
-			blocknum block = get_inode_block(&node, offset);
+			blocknum block = get_node_block(&node, offset);
 			if(!block.valid) {
 				break;
 			}	
@@ -974,16 +1013,18 @@ static int vfs_delete(const char *path)
 			return 0;
 		}
 		free(dir);
+		//Find the directory containing our file
 		dnode containing_dir;
 		cdread(contain_de.block.block, (char *)&containing_dir);
 		for(unsigned offset = 0; offset < 128 * 128 + 128 + 110; ++offset) {
-			blocknum block = get_inode_block(&containing_dir, offset);
+			blocknum block = get_node_block(&containing_dir, offset);
 			if(!block.valid) {
 				continue;
 			}
 			dirent d;
 			cdread(block.block, (char *)&d);
 			for(int i = 0; i < ENTRIES_IN_DIR; ++i) {
+				//And if we find it, remove it
 				if(strcmp(d.entries[i].name, filename) == 0) {
 					free(filename);
 							
@@ -1002,8 +1043,9 @@ static int vfs_delete(const char *path)
 		}
 
 		return 0;
+	//Delete cannot remove directories
 	} else {
-		return 0;
+		return -EISDIR;
 	}
 }
 /*
@@ -1016,8 +1058,8 @@ static int vfs_delete(const char *path)
 static int vfs_rename(const char *from, const char *to)
 {
 	//as to not conflict with root global
-	dnode root1;
-	cdread(1, (char *)&root1);
+	dnode root;
+	cdread(1, (char *)&root);
 
 	direntry from_file;
 
@@ -1130,9 +1172,9 @@ static int vfs_truncate(const char *file, off_t offset)
 	blocknum nullblock = (blocknum){0, 0};
 
 	for(int i = 0; i + block_to_remove <= (node.size -1) / BLOCKSIZE; ++i){
-		blocknum block = get_inode_block(&node, block_to_remove + i);
+		blocknum block = get_node_block(&node, block_to_remove + i);
 		if(!block.valid) { break; }
-		set_inode_block(&node, inode_entry.block, nullblock, block_to_remove + 1);
+		set_node_block(&node, inode_entry.block, nullblock, block_to_remove + 1);
 		release_block(block);
 	}
 
