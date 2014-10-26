@@ -160,7 +160,6 @@ int path_exists(const char * path, direntry * de) {
  */
 blocknum get_inode_block(inode * node, unsigned int offset) {
 	if(offset > node->size) {
-		printf("Offset outside of node!");
 		return (blocknum){0, 0};
 	}
 
@@ -234,7 +233,7 @@ void set_inode_block(inode * node, blocknum inode_block, blocknum block, unsigne
 		if(!double_indirect.blocks[double_offset].valid) {
 			double_indirect.blocks[double_offset] = head.free;
 			vcb_update_free();
-			dwrite(node->double_indirect.block, (char *)node);
+			dwrite(node->double_indirect.block, (char *)&double_indirect);
 		}
 		dread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
 	
@@ -843,7 +842,10 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 			return 0;
 		}
 		dread(block.block, data);
-		memcpy(buf, data + BLOCKSIZE - (offset % BLOCKSIZE), offset % BLOCKSIZE);
+        unsigned int internal_offset = offset % BLOCKSIZE;
+        /* everything else in the block, which will be (over)written */
+        unsigned int remainder = BLOCKSIZE - internal_offset;
+        memcpy(buf, data + internal_offset, remainder);
 		bytes_read += offset % BLOCKSIZE; 
 		++startblock;
 	}	
