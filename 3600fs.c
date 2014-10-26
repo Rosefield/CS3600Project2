@@ -120,6 +120,9 @@ int file_exists(dnode * dir, char * name, direntry * de) {
 //If the argument given for path is "/", then  de will not be set.
 int path_exists(const char * path, direntry * de) {
 	if(strcmp("/", path) == 0) {
+		dirent d;
+		dread(2, (char *)&d);
+		*de = d.entries[0];
 		return 1;
 	}
 
@@ -159,10 +162,6 @@ int path_exists(const char * path, direntry * de) {
  * @offset: inode block index
  */
 blocknum get_inode_block(inode * node, unsigned int offset) {
-	if(offset > node->size) {
-		return (blocknum){0, 0};
-	}
-
 
 	//This function will return a "null" blocknumber {0, 0} if the blocknum it is supposed to read
 	//or return is not valid
@@ -263,7 +262,7 @@ void set_inode_block(inode * node, blocknum inode_block, blocknum block, unsigne
 	return;
 }
 
-void write_inode_block(inode * node, blocknum inode_block, const char * data, unsigned int offset) {
+void write_inode_block(inode * node, blocknum inode_block, char * data, unsigned int offset) {
 	blocknum block = get_inode_block(node, offset);
 	//Get a free block from the vcb
 	if(!block.valid) {
@@ -316,14 +315,15 @@ void add_direntry(dnode * dir, unsigned int dir_block, direntry our_direntry) {
  * block pointing to current head.free and write it. then update head.free
  * to point to newly replaced block
  */
-void release_block (unsigned int block) {
+void release_block (blocknum block) {
     /* new free block, pointing to current head.free */
     free_block tmp;
     tmp.next = head.free;
-    dwrite(block, (char*) &tmp);
+    dwrite(block.block, (char*) &tmp);
     /* set head.free to new */
-    head.free.block = block;
-    dwrite(0, (char*) &head);
+    head.free = block;
+    head.free.valid = 1;
+	dwrite(0, (char*) &head);
 }
 
 //Fills fields in the dnode, gets a free block for its first dirent
@@ -368,17 +368,6 @@ char * dir_name(const char * path) {
 	strncpy(dir, path, strlen(path) - strlen(last_char) + 1);
 	dir[strlen(path) - strlen(last_char) + 1] = '\0';	
 	return dir;
-
-	//Strrchr() appears to be a destructive use of its input; take a copy of it first
-	/*
-	char * tmp = strdup(path);
-	char * last_char = strdup(strrchr(tmp, '/'));
-	char * dir = "";
-	strncpy(dir, tmp, strlen(tmp) - strlen(last_char) + 1);
-	dir[strlen(tmp) - strlen(last_char) +1] = '\0';
-	free(tmp);
-	return dir;
-	*/
 }
 
 
@@ -471,6 +460,10 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 	//direntry our_direntry;
 	direntry tmp;
 
+	if(strcmp(path, "/93.txt") == 0) {
+		printf("bad file\n");
+	}
+
 	if(!strcmp(path, "/") == 0) {
 		if(path_exists(path, &tmp)) {
 			dread(tmp.block.block, (char *) &our_node);
@@ -507,7 +500,7 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 		stbuf->st_blocks  = 1; // file size in blocks
 	} else {
 		stbuf->st_size    = our_node.size; // file size
-		stbuf->st_blocks  = our_node.size / BLOCKSIZE; // file size in blocks
+		stbuf->st_blocks  = our_node.size / BLOCKSIZE + 1; // file size in blocks
 	}
 
   return 0;
@@ -654,66 +647,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	}
 
 	return 0;
-
-
-	/*
-
-    if (strcmp(path, "/") != 0) {
-        return -1;
-    }
-
-
-    int outer_start = offset / ENTRIES_IN_DIR;
-    int inner_start, next;
-    int counter = offset; /* number of entries processed */
-   	/*
-	int is_first = 1;
-    char *file;
-
-    // only supports direct blocks atm
-    // for each direct block starting from aaa
-    for (int i = outer_start; i < 110; i++) {
-
-        dirent tmp;
-        dread(root.direct[i].block, (char*) &tmp);
-
-        if (is_first) {
-            inner_start = offset % ENTRIES_IN_DIR;
-            is_first = 0;
-        } else {
-            inner_start = 0;
-        }
-
-        // iterate through dirents
-        for (int j = inner_start; j < ENTRIES_IN_DIR; j++) {
-
-            /* stop when we've processed all entries */
-    /*        if (counter == root.size) {
-                goto out;
-            }
-
-            /* check validity */
-      /*      if (!tmp.entries[j].block.valid) {
-                /* return 0; */
-       /*         continue;
-            }
-
-            file = tmp.entries[j].name;
-            next = i*ENTRIES_IN_DIR + j + 1;
-            if (filler(buf, file, NULL, next)) {
-                return 0;
-            }
-
-            counter++;
-
-        }
-    }
-
-out:
-    return 0;
-*/
 }
-
 /*
  * Given an absolute path to a file (for example /a/b/myFile), vfs_create 
  * will create a new file named myFile in the /a/b directory.
@@ -960,78 +894,73 @@ static int vfs_delete(const char *path)
   /* 3600: NOTE THAT THE BLOCKS CORRESPONDING TO THE FILE SHOULD BE MARKED
            AS FREE, AND YOU SHOULD MAKE THEM AVAILABLE TO BE USED WITH OTHER FILES */
 
-    //make sure file exists and is a file (not dir)
-
-    char *name = path + 1;
+	if(strcmp(path, "/") == 0) {
+		return -EACCES;
+	}
+	
+	
 	direntry de;
-    if (file_exists(&root, name, &de)) {
-		if(de.type != DIRENTRY_FILE) {
-        	return -1;
+	if(!path_exists(path, &de)) {
+		printf("File not found\n");
+		return -ENOENT;
+	}
+	if(de.type == DIRENTRY_FILE) {
+		inode node;
+		dread(de.block.block, (char *)&node);
+		for(unsigned offset = 0; offset < 128 * 128 + 128 + 110; ++offset) {
+			blocknum block = get_inode_block(&node, offset);
+			if(!block.valid) {
+				break;
+			}	
+			release_block(block);
 		}
-    }
+		
+		char * tmp = strdup(path);
+		if(tmp[strlen(tmp) - 1] == '/') {
+			tmp[strlen(tmp) -1] = '\0';
+		}
+		char * dir = dir_name(tmp);
+		char * filename = file_name(tmp);
+		free(tmp);		
 
-    //remove file's entry from directory
-    /* TODO: this only works for directs, not indirects */
-    for (int i = 0; i < 110; i++) {
-    /* for each direct: */
-        dirent tmp;
-        dread(root.direct[i].block, (char*) &tmp);
-        for (int j = 0; j < ENTRIES_IN_DIR; j++) {
-        /* for each direntry: */
-            if (strcmp(tmp.entries[j].name, name) == 0) {
-            /* if direntry.name == path: */
-                inode name_inode;
-                /* blk = direntry.block */
-                /* inode = dread(blk) */
-                dread(tmp.entries[j].block.block, (char*) &name_inode);
-                // free all of the file's data blocks
-                for(int x = 0; x < 110; x++) {
-                /* for each of inode's directs: */
-                    int done_flag = 0; // TODO this is really bad
-                    dirent name_dirent;
-                    dread(name_inode.direct[x].block, (char*) &name_dirent);
-                    for (int y = 0; y < ENTRIES_IN_DIR; j++) {
-                    /* for each direntry: */
-                        /* check if valid */
-                        if (!name_dirent.entries[y].block.valid) {
-                            done_flag = 1; // break out of both loops
-                            break;
-                        }
-                        /* free the data block */
-                        release_block(name_dirent.entries[y].block.block);
-                    }
-                    if (done_flag) {
-                        /* we've reached the end of data blocks and don't */
-                        /* need to keep iterating through inode directs */
-                        break;
-                    }
-                }
+		direntry contain_de;
+		if(!path_exists(dir, &contain_de)) {
+			//How did you get here?
+			return 0;
+		}
+		free(dir);
+		dnode containing_dir;
+		dread(contain_de.block.block, (char *)&containing_dir);
+		for(unsigned offset = 0; offset < 128 * 128 + 128 + 110; ++offset) {
+			blocknum block = get_inode_block(&containing_dir, offset);
+			if(!block.valid) {
+				continue;
+			}
+			dirent d;
+			dread(block.block, (char *)&d);
+			for(int i = 0; i < ENTRIES_IN_DIR; ++i) {
+				if(strcmp(d.entries[i].name, filename) == 0) {
+					free(filename);
+							
+					release_block(de.block);
+	
+					direntry empty;
+                	memset(&empty, 0, sizeof(empty));
+                	d.entries[i] = empty;
+					
+					dwrite(block.block, (char *)&d);
+					containing_dir.size--;
+					dwrite(contain_de.block.block, (char *)&containing_dir);
+					return 0;
+				}
+			}
+		}
 
-                /* free the inode itself */
-                release_block(tmp.entries[j].block.block);
-                
-                /* clear the direntry in the dirent */
-                direntry empty;
-                memset(&empty, 0, sizeof(empty));
-                tmp.entries[j] = empty;
-
-                /* write to disk */
-                dwrite(root.direct[i].block, (char*) &tmp);
-
-                /* decrement dnode size */
-                root.size--;
-                dwrite(1, (char*) &root);
-
-
-                return 0;
-            }
-        }
-    }
-
-    /* shouldn't get here */
-    return 0;
+		return 0;
+	} else {
+		return 0;
+	}
 }
-
 /*
  * The function rename will rename a file or directory named by the
  * string 'oldpath' and rename it to the file name specified by 'newpath'.
@@ -1159,7 +1088,7 @@ static int vfs_truncate(const char *file, off_t offset)
 		blocknum block = get_inode_block(&node, block_to_remove + i);
 		if(!block.valid) { break; }
 		set_inode_block(&node, inode_entry.block, nullblock, block_to_remove + 1);
-		release_block(block.block);
+		release_block(block);
 	}
 
 	if(offset < node.size) {
