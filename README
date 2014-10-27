@@ -1,11 +1,11 @@
-Project 2: Inode File System                                                       
-                                       
-Schuyler Rosefield && Mark Mossberg, (team correcthorsebatterystaple)              
-Northeastern University                                                            
-CS 3600: Systems and Networks                                                      
-Professor Alan Mislove                                                             
-                                                                                   
-## Approaches                                                                      
+Project 2: Inode File System
+
+Schuyler Rosefield && Mark Mossberg, (team correcthorsebatterystaple)
+Northeastern University
+CS 3600: Systems and Networks
+Professor Alan Mislove
+
+## Approaches
 
 For our high level approach, we generally followed the guidelines given in the
 assignment document regarding the order in which to implement functions.
@@ -14,7 +14,7 @@ Everything in the filesystem can be addressed either through its path (/a/b/c),
 or through a known node (either dnode or inode). Using this knowledge we were
 able to create a layer of abstraction based upon these properties to ease use
 of the disk. This includes functions that given a path, will return existence,
-arbitrary-block addressing of direct/indirect/double-indirect blocks within a 
+arbitrary-block addressing of direct/indirect/double-indirect blocks within a
 dnode/inode, and claiming/freeing blocks from the file system.
 
 ## Challenges
@@ -23,13 +23,11 @@ Many of the challenges we encountered while developing the file system were due
 to inconsistencies between global variables we used for certain key blocks
 (such as the VCB, root dnode, and root dirent) and actual state of those blocks
 on the disk. Eventually we were able to eliminate the root dnode and root dirent
-global variables which fixed many of our problems. Our biggest challenge,
-which is currently unsolved, is that we were not able to get the final
-test to pass, which is "Very large write/read". Under manual testing, our
-file system performs this just fine, however, for reasons we can't figure
-out, the test does not pass.
+global variables which fixed many of our problems. Additionally, we found it
+was easy to make off by one errors when doing block calculations; this was
+the cause of several bugs.
 
-## Features                                                                        
+## Features
 
 Our file system supports standard filesystem operations including file creation,
 deletion, reading, and writing and additionally supports a multilevel
@@ -38,25 +36,25 @@ which caches the VCB, root dnode, and root dirent, given that they are the most
 frequently accessed blocks on the system. This significantly improved our
 performance in terms of decreasing the number of actual disk reads and writes our
 file system made. Lastly, we implemented triple indirects into the structure used
-for dnodes and inodes which exponentially increased both the number of entries 
+for dnodes and inodes which exponentially increased both the number of entries
 that our directories can hold, and the amount of data that our files can contain.
 Integrating triple indirects was relatively easy given the abstraction
 layer previously implemented.
-   
-## Testing                                                                         
+
+## Testing
 
 Testing involved mirroring the provided tests, as well as creating additional
 tests that challenged functionality not already considered in the provided tests.
-This includes testing things such as delete in a multi-level directory, 
-starvation of available blocks for the file system, and ensuring that the 
+This includes testing things such as delete in a multi-level directory,
+starvation of available blocks for the file system, and ensuring that the
 cache functions properly. We tested with automated scripts and manual file
-system interaction with common unix utilities. 
-   
-## Motivation                                                                      
-                                                                                   
+system interaction with common unix utilities.
+
+## Motivation
+
 We chose the Inodes format for the file system. We chose this partially because 
-of the challenge and flexibility that it presented in comparison to the FAT        
-file system, and the additional functionality it can provide with ease             
-(multi-level directories) once the structures are set up. Lastly, we valued        
-that it is the format used in Linux systems, and thought that implementing it   
+of the challenge and flexibility that it presented in comparison to the FAT
+file system, and the additional functionality it can provide with ease
+(multi-level directories) once the structures are set up. Lastly, we valued
+that it is the format used in Linux systems, and thought that implementing it
 would provide better understanding of how Linux works.

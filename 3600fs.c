@@ -3,7 +3,7 @@
  * Project 2 Starter Code
  * (c) 2013 Alan Mislove
  *
- * This file contains all of the basic functions that you will need 
+ * This file contains all of the basic functions that you will need
  * to implement for this project.  Please see the project handout
  * for more details on any particular function, and ask on Piazza if
  * you get stuck.
@@ -40,11 +40,15 @@
 #include "inode.h"
 
 vcb head;
-
 cache *c;
 
-// Cache Functions
+/*
+ * Cache Functions
+ */
 
+/*
+ * cdread - cache wrapper over dread
+ */
 int cdread(int blocknum, char *buf) {
 
     /* only cache vcb, root dnode, root dirent */
@@ -59,6 +63,9 @@ int cdread(int blocknum, char *buf) {
 }
 
 
+/*
+ * cdwrite - cache wrapper over dwrite
+ */
 int cdwrite(int blocknum, char *buf){
     if (blocknum >= 0 && blocknum <= 2) {
         memcpy(c->entries[blocknum].data, buf, BLOCKSIZE);
@@ -70,7 +77,9 @@ int cdwrite(int blocknum, char *buf){
     return -1;
 }
 
-//Helper functions
+/*
+ * Helper Functions
+ */
 
 /*
  * name_in_dirent - search dirent for filename
@@ -94,7 +103,9 @@ int name_in_dirent(dirent d, char * name, direntry * de) {
 	return 0;
 }
 
-//Updates the VCB to be the next free block
+/*
+ * Updates the VCB to be the next free block
+ */
 void vcb_update_free() {
 	free_block tmp;
 
@@ -110,9 +121,8 @@ void vcb_update_free() {
 }
 
 /*
- * get_node_block -
- *
- * Returns blocknum of data block at offset. Goes through direct, indirect, and double_indirect blocks
+ * get_node_block - Returns blocknum of data block at offset. Goes through
+ * direct, indirect, and double_indirect blocks
  *
  * @node: the node to read from
  * @offset: node block index
@@ -133,7 +143,7 @@ blocknum get_node_block(inode * node, unsigned int offset) {
 		offset -= NUM_DIRECT + 128 + 128 * 128;
 
 		int triple_offset = offset / (128 * 128) % 128;
-		
+
 		if(!triple_indirect.blocks[triple_offset].valid) {
 			return (blocknum){0,0};
 		}
@@ -205,13 +215,12 @@ blocknum get_node_block(inode * node, unsigned int offset) {
 }
 
 /**
-* set_node_block
-*
-* Given a node, finds the offset-th block in node, and sets it to block. 
+* set_node_block - Given a node, finds the offset-th block in node, and sets
+* it to block.
 *
 **/
 void set_node_block(inode * node, blocknum inode_block, blocknum block, unsigned int offset) {
-	
+
 	//In triple indirect
 	if(offset >= NUM_DIRECT + 128 + 128 * 128) {
 		if(!node->triple_indirect.valid) {
@@ -225,7 +234,7 @@ void set_node_block(inode * node, blocknum inode_block, blocknum block, unsigned
 		offset -= NUM_DIRECT + 128 + 128 * 128;
 
 		int triple_offset = offset / (128 * 128) % 128;
-		
+
 		if(!triple_indirect.blocks[triple_offset].valid) {
 			triple_indirect.blocks[triple_offset] = head.free;
 			vcb_update_free();
@@ -244,7 +253,7 @@ void set_node_block(inode * node, blocknum inode_block, blocknum block, unsigned
 		}
 		indirect single_indirect;
 		cdread(double_indirect.blocks[double_offset].block, (char *)&single_indirect);
-	
+
 		int single_offset = offset % 128;
 		single_indirect.blocks[single_offset] = block;
 		cdwrite(double_indirect.blocks[double_offset].block, (char *) &single_indirect);
@@ -516,6 +525,7 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
     if(head.magic != 0x77) {
         //throw an error
         perror("Magic is incorrect.\n");
+        dunconnect();
         return NULL;
     }
 
@@ -569,8 +579,7 @@ static void vfs_unmount (void *private_data) {
 
 	//Add metadata about write state, a "clean" tag
 
-  // TODO: write cache to disk
-	
+    /* write cache to disk */
 	for (int i = 0; i < 3; i++) {
         dwrite(i, c->entries[i].data);
     }
@@ -584,7 +593,7 @@ static void vfs_unmount (void *private_data) {
   dunconnect();
 }
 
-/* 
+/*
  *
  * Given an absolute path to a file/directory (i.e., /foo ---all
  * paths will start with the root directory of the CS3600 file
@@ -601,10 +610,6 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 	cdread(1, (char *)&our_node);
 	//direntry our_direntry;
 	direntry tmp;
-
-	if(strcmp(path, "/93.txt") == 0) {
-		printf("bad file\n");
-	}
 
 	if(!strcmp(path, "/") == 0) {
 		if(path_exists(path, &tmp)) {
