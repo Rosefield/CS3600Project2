@@ -1241,14 +1241,14 @@ static int vfs_truncate(const char *file, off_t offset)
 	if(offset > node.size) { return 0; }
 	int block_to_remove = 0;
 	if(offset != 0) {
-		block_to_remove = (offset -1)/ BLOCKSIZE + 1;
+		block_to_remove = (offset)/ BLOCKSIZE + 1;
 	}
 	blocknum nullblock = (blocknum){0, 0};
 
-	for(int i = 0; i + block_to_remove <= (node.size -1) / BLOCKSIZE; ++i){
-		blocknum block = get_node_block(&node, block_to_remove + i);
+	for(; block_to_remove <= MAX_BLOCKS; ++block_to_remove){
+		blocknum block = get_node_block(&node, block_to_remove);
 		if(!block.valid) { break; }
-		set_node_block(&node, inode_entry.block, nullblock, block_to_remove + 1);
+		set_node_block(&node, inode_entry.block, nullblock, block_to_remove);
 		release_block(block);
 	}
 
